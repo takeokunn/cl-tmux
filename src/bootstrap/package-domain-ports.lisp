@@ -19,5 +19,4 @@
    #:repo-add-session
    #:repo-remove-session
    #:repo-all-sessions
-   #:repo-current-session
-   #:*session-repo*))
+   #:repo-current-session))

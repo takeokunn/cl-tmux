@@ -9,6 +9,7 @@
         #:cl-tmux/hooks)
   (:export
    #:kill-pane
+   #:close-pane-pty
    #:kill-window
    #:resize-pane
    #:rename-window
@@ -131,7 +132,6 @@
    #:server-remove-session
    #:server-all-sessions
    #:server-current-session
-   #:install-session-repository
    #:in-memory-session-store
    #:*session-groups*
    #:*group-id-counter*

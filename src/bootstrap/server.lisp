@@ -73,9 +73,13 @@
    Does NOT mutate the dirty flag — that is the caller's responsibility."
   (multiple-value-bind (rows cols) (decode-size payload)
     (setf *term-rows* rows *term-cols* cols)
-    (let ((active-window (session-active-window session)))
-      (when active-window
-        (window-relayout active-window (- rows *status-height*) cols)))))
+    (%relayout-active-window session rows cols)))
+
+(defun %relayout-active-window (session rows cols)
+  "Relayout SESSION's active window for ROWS and COLS, if any."
+  (let ((active-window (session-active-window session)))
+    (when active-window
+      (window-relayout active-window (- rows *status-height*) cols))))
 
 (defun %dispatch-byte-result (result)
   "Map a single process-byte RESULT to a serve-loop disposition.
@@ -176,7 +180,7 @@
   ;; Initial attach or resize: update terminal dimensions and mark dirty.
   ((or (= type +msg-attach+) (= type +msg-resize+))
    (apply-client-size session payload)
-   (setf *dirty* t)
+   (%mark-dirty)
    nil)
   ;; Keystroke: run through the shared prefix/copy-mode pipeline.
   ;; :quit arm also clears *running* here (effect boundary: %handle-client-message
@@ -186,7 +190,7 @@
    (case (process-client-keys session payload state)
      (:quit   (setf *running* nil) :quit)
      (:detach :detach)
-     (t       (setf *dirty* t) nil)))
+     (t       (%mark-dirty) nil)))
   ;; Unknown message type: treat as a graceful disconnect.
   (t
    :disconnect))
@@ -197,7 +201,6 @@
    window is killed."
   (require :sb-posix)
   (install-pty-port)              ; wire the CFFI PTY adapter into the domain port
-  (install-session-repository)   ; wire the in-memory session store into the repository port
   (ignore-errors (load-config-file))
   (setf *running*          t
         *dirty*            t
@@ -213,7 +216,7 @@
     (let ((listener (make-listener path)))
       (dolist (pane (all-panes session))
         (start-reader-thread pane))
-      (setf *status-timer* (start-status-timer (lambda () (setf *dirty* t))))
+      (setf *status-timer* (start-status-timer #'%mark-dirty))
       (install-sigwinch-handler)
       (unwind-protect
    ;; Multi-client event loop: a single select(2) over the listener fd +
@@ -223,4 +226,4 @@
         (close-socket listener)
         (ignore-errors (delete-file path))
         (dolist (pane (all-panes session))
-          (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))))))
+          (close-pane-pty pane))))))

@@ -56,11 +56,24 @@
   ;; visual-silence on/both: show a transient overlay naming the quiet window
   ;; (mirrors visual-activity in %mark-window-activity).
   (when (%visual-alert-message-p "visual-silence")
-    (show-transient-overlay
-     (format nil "Silence in window ~A (~A)"
-             (cl-tmux/model:window-id win)
-             (cl-tmux/model:window-name win))))
+    (%show-window-alert-overlay "Silence" win))
   (funcall dirty-fn))
+
+(defun %window-monitor-silence-due-p (win session now silence-secs silence-action)
+  "True when WIN has been quiet long enough to trigger monitor-silence."
+  (let ((last-output-time (cl-tmux/model:window-last-output-time win)))
+    (and (> last-output-time 0)
+         (not (cl-tmux/model:window-silence-flag win))
+         (>= (- now last-output-time) silence-secs)
+         ;; silence-action gates which windows alert.
+         (%alert-action-fires-p silence-action
+                                (eq win (cl-tmux/model:session-active-window session))))))
+
+(defun %check-monitor-silence-session (session now silence-secs silence-action dirty-fn)
+  "Scan SESSION's windows and fire alerts for any silence matches."
+  (dolist (win (cl-tmux/model:session-windows session))
+    (when (%window-monitor-silence-due-p win session now silence-secs silence-action)
+      (%fire-silence-alert win dirty-fn))))
 
 (defun %check-monitor-silence (sessions dirty-fn)
   "For each window in SESSIONS with monitor-silence enabled, set
@@ -68,19 +81,11 @@
    monitor-silence = 0 (default) disables per-window silence monitoring."
   (let ((silence-secs (cl-tmux/options:get-option "monitor-silence")))
     (when (and (integerp silence-secs) (> silence-secs 0))
-      (let ((now (get-universal-time)))
+      (let ((now (get-universal-time))
+            (silence-action (or (cl-tmux/options:get-option "silence-action") "other")))
         (dolist (entry sessions)
-          (let ((sess (cdr entry)))
-            (dolist (win (cl-tmux/model:session-windows sess))
-              (let ((last-output-time (cl-tmux/model:window-last-output-time win)))
-                (when (and (> last-output-time 0)
-                           (not (cl-tmux/model:window-silence-flag win))
-                           (>= (- now last-output-time) silence-secs)
-                           ;; silence-action gates which windows alert.
-                           (%alert-action-fires-p
-                            (or (cl-tmux/options:get-option "silence-action") "other")
-                            (eq win (cl-tmux/model:session-active-window sess))))
-                  (%fire-silence-alert win dirty-fn))))))))))
+          (%check-monitor-silence-session (cdr entry) now silence-secs silence-action
+                                          dirty-fn))))))
 
 (defun %timer-tick-overlay (dirty-fn)
   "Check if the active overlay has expired; dismiss it and call DIRTY-FN if so."
@@ -96,15 +101,21 @@
         (progn (funcall dirty-fn) 0)
         elapsed)))
 
+(defmacro %with-running-timer-check (condition &body body)
+  "Run BODY when *running* and CONDITION are true, ignoring failures."
+  `(when (and *running* ,condition)
+     (ignore-errors ,@body)))
+
 (defun %timer-tick-lock (session dirty-fn)
   "Check lock-after-time inactivity for SESSION; no-op when SESSION is NIL."
-  (when (and *running* session)
-    (ignore-errors (%check-lock-after-time session dirty-fn))))
+  (when session
+    (%with-running-timer-check session
+      (%check-lock-after-time session dirty-fn))))
 
 (defun %timer-tick-silence (server-sessions-fn dirty-fn)
   "Check monitor-silence thresholds; no-op when SERVER-SESSIONS-FN is NIL."
-  (when (and *running* server-sessions-fn)
-    (ignore-errors
+  (when server-sessions-fn
+    (%with-running-timer-check server-sessions-fn
       (%check-monitor-silence (funcall server-sessions-fn) dirty-fn))))
 
 (defun start-status-timer (dirty-fn &key session server-sessions-fn)

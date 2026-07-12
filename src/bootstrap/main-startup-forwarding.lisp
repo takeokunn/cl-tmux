@@ -1,4 +1,4 @@
-;;; Startup command-client forwarding helpers.
+;;; Startup command forwarding helpers.
 
 (in-package :cl-tmux)
 

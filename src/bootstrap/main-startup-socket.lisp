@@ -25,6 +25,19 @@
   (append (when *socket-path-override* (list "-S" *socket-path-override*))
           (when *socket-name-override* (list "-L" *socket-name-override*))))
 
+(defun %launch-server-and-poll-when-live (socket-path exe args)
+  (let ((launched
+          (ignore-errors
+            (sb-ext:run-program exe args
+                                :wait nil
+                                :output nil :error nil))))
+    ;; Poll only when we actually attempted a launch.  This avoids the
+    ;; unconditional 3-second dead-time when run-program silently failed.
+    (when launched
+      (loop repeat +server-socket-poll-max-iterations+
+            until (probe-file socket-path)
+            do (sleep +server-socket-poll-interval-seconds+)))))
+
 (defun %ensure-server-running (session-name)
   "Start a background server for SESSION-NAME if no live socket exists.
    A stale socket file (present but refusing connections) is unlinked first,
@@ -43,16 +56,7 @@
       ;; Guard: run-program may fail in test environments or when the
       ;; binary is not yet on PATH.  Only poll if the spawn succeeded.
       ;; :wait nil means non-blocking, so run-program returns after starting the child.
-      (let ((launched (ignore-errors
-                        (sb-ext:run-program exe args
-                                            :wait nil
-                                            :output nil :error nil))))
-        ;; Poll only when we actually attempted a launch.  This avoids the
-        ;; unconditional 3-second dead-time when run-program silently failed.
-        (when launched
-          (loop repeat +server-socket-poll-max-iterations+
-                until (probe-file socket-path)
-                do (sleep +server-socket-poll-interval-seconds+)))))))
+      (%launch-server-and-poll-when-live socket-path exe args))))
 
 (defun %socket-file-session-name (path)
   "Extract the cl-tmux session/server name from a socket PATH, or NIL."
@@ -78,3 +82,42 @@
                      "cl-tmux-*.sock"
                      (parse-namestring (format nil "~A/" (%socket-directory))))))
        (%socket-file-session-name (first (ignore-errors (directory pattern))))))))
+
+(defun %consume-global-socket-flags (argv)
+  "Consume tmux's global socket flags from the front of ARGV, before the
+   command word: -L <socket-name> and -S <socket-path>, in both the separated
+   (-L name) and attached (-Lname) getopt forms.  Sets *socket-name-override* /
+   *socket-path-override* and returns the remaining argv."
+  (loop
+    (let ((head (first argv)))
+      (cond
+        ((null head) (return argv))
+        ((%consume-socket-flag argv "-L" :name)
+         nil)
+        ((%consume-socket-flag argv "-S" :path)
+         nil)
+        (t (return argv))))))
+
+(defun %consume-socket-flag (argv flag kind)
+  "Consume one global socket flag from ARGV when HEAD matches FLAG.
+   KIND selects which override slot is updated: :name or :path."
+  (let ((head (first argv)))
+    (cond
+      ((null head) nil)
+      ((string= head flag)
+       (pop argv)
+       (when argv
+         (%set-socket-override kind (pop argv)))
+       t)
+      ((and (> (length head) (length flag))
+            (string= flag head :end2 (length flag)))
+       (%set-socket-override kind (subseq head (length flag)))
+       (pop argv)
+       t)
+      (t nil))))
+
+(defun %set-socket-override (kind value)
+  "Update the global socket override selected by KIND with VALUE."
+  (ecase kind
+    (:name (setf *socket-name-override* value))
+    (:path (setf *socket-path-override* value))))

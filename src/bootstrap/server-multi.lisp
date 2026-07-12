@@ -57,36 +57,23 @@
        (error ,(if condition-var (list condition-var) '())
          ,on-error))))
 
-(defun %client-fds ()
-  "The socket fds of every attached client (for the select read-set)."
-  (mapcar #'client-conn-fd *clients*))
-
-;;; ── Connection lifecycle ────────────────────────────────────────────────────
-
-(defun %add-client (socket)
-  "Register SOCKET as a new client: build its CLIENT-CONN (with a fresh keystroke
-   state seeded to the current geometry), fire the client-attached hook, and mark
-   the screen dirty so the new client gets an immediate paint.  Returns the conn."
-  (let ((conn (%make-client-conn :socket socket
-                                 :stream (socket-stream socket)
-                                 :fd     (socket-fd socket)
-                                 :state  (make-input-state)
-                                 :rows   *term-rows*
-                                 :cols   *term-cols*)))
-    (push conn *clients*)
-    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-client-attached+)
-    (setf *dirty* t)
-    conn))
-
-(defun %drop-client (conn &key bye)
-  "Remove CONN: optionally send a bye frame, close its socket, fire the
-   client-detached hook, and unregister it.  Safe to call more than once."
-  (when (member conn *clients*)
-    (when bye
-      (ignore-errors (send-frame (client-conn-stream conn) (msg-bye))))
-    (ignore-errors (close-socket (client-conn-socket conn)))
-    (setf *clients* (remove conn *clients*))
-    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-client-detached+)))
+(define-multi-msg-dispatch
+  ;; EOF: peer closed the connection.
+  ((null type) :drop)
+  ;; Client requested clean detach.
+  ((= type +msg-detach+) :drop)
+  ;; Initial attach or resize: update CONN's geometry and re-apply effective size.
+  ((or (= type +msg-attach+) (= type +msg-resize+))
+   (%handle-multi-attach-or-resize session conn type payload))
+  ;; Keystroke: feed to the pane's stdin-target (split-window -I) or run through
+  ;; the shared prefix/copy-mode pipeline with CONN's private state.
+  ((= type +msg-key+)
+   (%handle-multi-key-message session conn payload))
+  ;; Command forwarding: run-command from a CLI client or control-mode client.
+  ((= type +msg-command+)
+   (%handle-multi-command-message session conn payload))
+  ;; Unknown message type: treat as disconnect.
+  (t :drop))
 
 ;;; ── Effective geometry (smallest attached client) ───────────────────────────
 
@@ -127,9 +114,8 @@
    relayout SESSION's active window for the new size, and mark the screen dirty."
   (multiple-value-bind (rows cols) (%effective-client-size)
     (setf *term-rows* rows *term-cols* cols)
-    (let ((win (session-active-window session)))
-      (when win (window-relayout win (- rows *status-height*) cols)))
-    (setf *dirty* t)))
+    (%relayout-active-window session rows cols)
+    (%mark-dirty)))
 
 ;;; ── Frame broadcast ─────────────────────────────────────────────────────────
 
@@ -156,135 +142,33 @@
     (setf *dirty* nil)
     (%send-broadcast-frame (%render-frame session))))
 
-;;; ── Per-client message dispatch ─────────────────────────────────────────────
+(defun %client-fds ()
+  "The socket fds of every attached client (for the select read-set)."
+  (mapcar #'client-conn-fd *clients*))
 
-(defun %server-split-window-input-command-p (cmd args)
-  "True when decoded command payload requests canonical split-window -I."
-  (and (eq cmd :split-window)
-       (some (lambda (arg)
-               (and (> (length arg) 1)
-                    (char= (char arg 0) #\-)
-                    (find #\I arg :start 1)))
-             args)))
+;;; ── Connection lifecycle ────────────────────────────────────────────────────
 
-(defun %forwarded-command-tokens (cmd target args)
-  "Reconstruct the token line <name> [-t target] args... for a forwarded
-   command, matching what the command-prompt would have typed interactively."
-  (append (list (string-downcase (symbol-name cmd)))
-          (when target (list "-t" target))
-          args))
+(defun %add-client (socket)
+  "Register SOCKET as a new client: build its CLIENT-CONN (with a fresh keystroke
+   state seeded to the current geometry), fire the client-attached hook, and mark
+   the screen dirty so the new client gets an immediate paint.  Returns the conn."
+  (let ((conn (%make-client-conn :socket socket
+                                 :stream (socket-stream socket)
+                                 :fd     (socket-fd socket)
+                                 :state  (make-input-state)
+                                 :rows   *term-rows*
+                                 :cols   *term-cols*)))
+    (push conn *clients*)
+    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-client-attached+)
+    (%mark-dirty)
+    conn))
 
-(defun %run-forwarded-command-tokens (session tokens input-command-p)
-  "Run TOKENS server-side via %run-command-tokens, binding *defer-split-window-input*
-   per INPUT-COMMAND-P.  Catches and reports any error so a bad forwarded command
-   cannot take down the multi-client event loop; returns NIL on error."
-  (with-loop-safe-error (condition
-                          :on-error (progn
-                                      (format *error-output*
-                                              "~&cl-tmux: command failed: ~{~A~^ ~}: ~A~%"
-                                              tokens condition)
-                                      (force-output *error-output*)
-                                      nil))
-    (let ((*defer-split-window-input* input-command-p))
-      (%run-command-tokens session tokens))))
-
-(defun %reply-with-command-output (conn)
-  "Send CONN the captured overlay text (display-message, list-*, ...) as a
-   +msg-reply+ frame.  A no-op when CONN has no live socket (the test conn)."
-  (when (client-conn-stream conn)
-    (ignore-errors
-      (send-frame (client-conn-stream conn)
-                  (msg-reply (or cl-tmux/prompt:*overlay* ""))))))
-
-(defun %dispatch-forwarded-command (session conn cmd target args)
-  "Run a non-built-in forwarded command CMD/TARGET/ARGS server-side and reply to
-   CONN with its output — the CLI / control command-forwarding path (`cl-tmux
-   <cmd>` against a running server).  Sequencing contract: build tokens → run
-   command → send reply → record stdin-target → mark dirty → return :quit if the
-   command ended the session, else NIL."
-  (let* ((tokens          (%forwarded-command-tokens cmd target args))
-         (input-command-p (%server-split-window-input-command-p cmd args))
-         ;; Capture the command's overlay text instead of showing it to
-         ;; interactive clients, so it can be returned to the CLI command
-         ;; client — the `cl-tmux display -p` (and `list-sessions`, ...) path.
-         (cl-tmux/prompt:*overlay* nil)
-         (*current-client-conn*   conn)
-         (result (%run-forwarded-command-tokens session tokens input-command-p)))
-    (%reply-with-command-output conn)
-    (when (and input-command-p (cl-tmux/model::pane-p result))
-      (setf (client-conn-stdin-target conn) result))
-    (setf *dirty* t)
-    (when (eq result :quit) :quit)))
-
-;;; define-multi-msg-dispatch builds %handle-multi-client-message from a
-;;; declarative rule table, delegating to define-message-dispatch-fn (server.lisp)
-;;; so both event loops share the same COND-expansion engine.  TYPE, PAYLOAD,
-;;; SESSION, and CONN are bound in every rule body.
-
-(defmacro define-multi-msg-dispatch (&rest rules)
-  "Build %handle-multi-client-message from a declarative message-type rule table.
-   Each RULE is (condition &rest body).  TYPE, PAYLOAD, SESSION, and CONN are
-   bound in every rule body.  Delegates to define-message-dispatch-fn (defined in
-   server.lisp) so the single-client and multi-client dispatch macros share the
-   same COND-expansion engine and cannot structurally diverge."
-  `(define-message-dispatch-fn
-       %handle-multi-client-message
-       (type payload session conn)
-       "Dispatch one message of TYPE/PAYLOAD from client CONN.  Returns a disposition:
-     :quit           — a command ended the session (loop must stop);
-     :drop           — CONN should be removed (EOF / detach / unknown type);
-     :detach-others  — drop every OTHER client (the `attach -d` request);
-     NIL             — keep serving.
-   Resize/attach updates CONN's geometry and re-applies the effective size; keys
-   run through the shared prefix/copy-mode pipeline with CONN's private state."
-     ,@rules))
-
-(define-multi-msg-dispatch
-  ;; EOF: peer closed the connection.
-  ((null type) :drop)
-  ;; Client requested clean detach.
-  ((= type +msg-detach+) :drop)
-  ;; Initial attach or resize: update CONN's geometry and re-apply effective size.
-  ((or (= type +msg-attach+) (= type +msg-resize+))
-   (multiple-value-bind (rows cols) (decode-size payload)
-     (setf (client-conn-rows conn) rows
-           (client-conn-cols conn) cols))
-   ;; attach-session -r: the read-only bit rides in the attach frame's optional
-   ;; flags byte.  Record it on CONN so the +msg-key+ branch can bind
-   ;; *client-read-only* and suppress pane input/paste/mouse for this client.
-   (when (= type +msg-attach+)
-     (setf (client-conn-read-only-p conn)
-           (logtest (decode-attach-flags payload) +attach-flag-read-only+)))
-   ;; Mark CONN most-recent so window-size "latest" tracks the active client.
-   (setf *clients* (cons conn (remove conn *clients*)))
-   (%apply-effective-size session)
-   nil)
-  ;; Keystroke: feed to the pane's stdin-target (split-window -I) or run through
-  ;; the shared prefix/copy-mode pipeline with CONN's private state.
-  ((= type +msg-key+)
-   (let ((stdin-target (client-conn-stdin-target conn)))
-     (if stdin-target
-         (progn
-           (pane-feed stdin-target payload)
-           (setf *dirty* t)
-           nil)
-         ;; Bind *client-read-only* to this connection's flag so the existing
-         ;; leaf-level enforcement (pane pty-write, paste, mouse forwarding)
-         ;; honours attach-session -r per client.  Detach/copy-mode commands do
-         ;; not pass through those gated sites, so they still work (CMD_READONLY).
-         (let ((*client-read-only* (client-conn-read-only-p conn)))
-           (case (process-client-keys session payload (client-conn-state conn))
-             (:quit   :quit)
-             (:detach :drop)
-             (t       (setf *dirty* t) nil))))))
-  ;; Command forwarding: run-command from a CLI client or control-mode client.
-  ((= type +msg-command+)
-   (multiple-value-bind (cmd target args) (decode-command-payload payload)
-     (cond
-       ;; The one built-in control command: drop all OTHER clients (attach -d).
-       ((eq cmd :detach-other-clients) :detach-others)
-       ;; Any other named command is run server-side and replied to CONN.
-       (cmd (%dispatch-forwarded-command session conn cmd target args))
-       (t (setf *dirty* t) nil))))
-  ;; Unknown message type: treat as disconnect.
-  (t :drop))
+(defun %drop-client (conn &key bye)
+  "Remove CONN: optionally send a bye frame, close its socket, fire the
+   client-detached hook, and unregister it.  Safe to call more than once."
+  (when (member conn *clients*)
+    (when bye
+      (ignore-errors (send-frame (client-conn-stream conn) (msg-bye))))
+    (ignore-errors (close-socket (client-conn-socket conn)))
+    (setf *clients* (remove conn *clients*))
+    (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-client-detached+)))

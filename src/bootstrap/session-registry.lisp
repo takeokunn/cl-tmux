@@ -16,7 +16,6 @@
 ;;;
 ;;; Implements the cl-tmux/repository protocol by delegating to the global
 ;;; *server-sessions* alist already maintained by server-* functions.
-;;; Wired into *session-repo* at server startup via install-session-repository.
 
 (defstruct in-memory-session-store
   "Concrete Repository implementation backed by *server-sessions*.")
@@ -41,10 +40,6 @@
     ((store in-memory-session-store))
   (server-current-session))
 
-(defun install-session-repository ()
-  "Register the in-memory session store as the active cl-tmux/repository adapter."
-  (setf cl-tmux/repository:*session-repo* (make-in-memory-session-store)))
-
 ;;; ── Session registry ──────────────────────────────────────────────────────────
 
 (defun server-add-session (session)
@@ -55,6 +50,25 @@
               (remove (session-name session) *server-sessions*
                       :key #'car :test #'string=))))
 
+(defun %find-session-by-exact-name (name)
+  "Return the session whose registry key exactly matches NAME, or NIL."
+  (cdr (assoc name *server-sessions* :test #'string=)))
+
+(defun %find-session-by-id-notation (name)
+  "Return the session referenced by $N notation in NAME, or NIL."
+  (when (char= (char name 0) #\$)
+    (let ((id (%parse-integer-or-nil (subseq name 1))))
+      (when id
+        (find id (mapcar #'cdr *server-sessions*) :key #'session-id)))))
+
+(defun %find-session-by-prefix (name)
+  "Return the first session whose registry key has NAME as a prefix, or NIL."
+  (loop for (key . sess) in *server-sessions*
+        when (and (stringp key)
+                  (>= (length key) (length name))
+                  (string= name key :end2 (length name)))
+          return sess))
+
 (defun server-find-session (name)
   "Find a session by NAME in *server-sessions*.
    Match order:
@@ -64,19 +78,9 @@
    Returns the session or NIL."
   (when (and name (plusp (length name)))
     (or
-     ;; 1. Exact name match
-     (cdr (assoc name *server-sessions* :test #'string=))
-     ;; 2. $N: match by session id
-     (when (char= (char name 0) #\$)
-       (let ((id (%parse-integer-or-nil (subseq name 1))))
-         (when id
-           (find id (mapcar #'cdr *server-sessions*) :key #'session-id))))
-     ;; 3. Name prefix match
-     (loop for (key . sess) in *server-sessions*
-           when (and (stringp key)
-                     (>= (length key) (length name))
-                     (string= name key :end2 (length name)))
-             return sess))))
+     (%find-session-by-exact-name name)
+     (%find-session-by-id-notation name)
+     (%find-session-by-prefix name))))
 
 (defun server-current-session ()
   "Return the most recently active session (highest session-last-active).
@@ -172,14 +176,17 @@
          (entry    (and group-id (assoc group-id *session-groups*))))
     (when entry
       (dolist (peer (cdr entry))
-        (unless (eq peer session)
-          (setf (session-windows peer) (session-windows session))
-          (unless (member (cl-tmux/model:session-active peer)
-                          (session-windows peer))
-            (setf (cl-tmux/model:session-active peer)
-                  (first (session-windows peer)))))))))
+        (%sync-peer-session-windows peer session)))))
 
 ;;; Install the group fan-out as the model layer's window-sync policy.  Unit
 ;;; tests that build sessions directly are unaffected: sessions without a group
 ;;; (or absent from *session-groups*) make the sync a no-op.
+(defun %sync-peer-session-windows (peer session)
+  (unless (eq peer session)
+    (setf (session-windows peer) (session-windows session))
+    (unless (member (cl-tmux/model:session-active peer)
+                    (session-windows peer))
+      (setf (cl-tmux/model:session-active peer)
+            (first (session-windows peer))))))
+
 (setf cl-tmux/model:*session-windows-sync-function* #'%sync-group-session-windows)

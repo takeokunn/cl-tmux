@@ -45,10 +45,6 @@
 
 ;;; ── Active repository ────────────────────────────────────────────────────────
 ;;;
-;;; Domain code that needs the repository calls through *session-repo*.
-;;; The composition root (server startup) sets this to the concrete implementation.
-
-(defvar *session-repo* nil
-  "The active session repository.  Set by install-session-repository at server
-   startup to a concrete store object.  Domain queries go through repo-* generics
-   on this value.")
+;;; The repository protocol is intentionally defined without a global active
+;;; store binding.  Composition roots can keep their own adapter objects and
+;;; invoke the repo-* generic functions directly.

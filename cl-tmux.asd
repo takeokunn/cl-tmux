@@ -224,9 +224,11 @@
       :pathname "bootstrap"
       :serial t
       :components
-      ((:file "runtime")        ; shared state + channel sync + prompt history + SIGWINCH
-       (:file "runtime-reader") ; PTY reader CPS state machine + alert-action dispatch table
-       (:file "runtime-timer"))) ; status interval timer, lock-after-time, monitor-silence
+      ((:file "runtime")              ; shared state + channel sync + SIGWINCH
+       (:file "runtime-history")      ; message log + prompt history
+       (:file "runtime-reader-alerts") ; remain-on-exit banner + alert-action helpers
+       (:file "runtime-reader")       ; PTY reader CPS state machine
+       (:file "runtime-timer")))      ; status interval timer, lock-after-time, monitor-silence
      ;; dispatch context, subdivided into cohesive sub-areas. Load order is
      ;; byte-identical to the old flat module; handlers split early (support)
      ;; / late (rest) via the :pathname trick (dispatch-handlers-2).
@@ -337,12 +339,16 @@
       :components
       ((:file "session-registry")  ; session registry + group management
        (:file "server")
+       (:file "server-multi-dispatch") ; multi-client attach/resize/key/command handlers
        (:file "server-multi")  ; multi-client client registry + dispatch helpers
        (:file "server-multi-loop") ; multi-client select-multiplexed serve loop
+       (:file "client-command") ; command-client I/O helpers
        (:file "client")
        (:file "main")
+       (:file "main-startup-flags") ; startup flag parser macro + attach flag parser
        (:file "main-startup-socket") ; socket discovery + server auto-start helpers
-       (:file "main-startup-forwarding") ; command-client forwarding helpers + generated commands
+       (:file "main-startup-forwarding") ; startup command forwarding helpers + generated commands
+       (:file "main-startup-commands") ; attach/new-session/list/source/version handlers
        (:file "main-startup"))))))
   ;; Build a standalone binary: (asdf:make :cl-tmux)
   :build-operation "program-op"

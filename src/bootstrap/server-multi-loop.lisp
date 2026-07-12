@@ -2,20 +2,23 @@
 
 ;;; ── Event-loop iteration ────────────────────────────────────────────────────
 
+(defun %exit-when-empty-and-option-enabled-p (items option-name)
+  "True when ITEMS is empty and OPTION-NAME is enabled."
+  (and (null items)
+       (cl-tmux/options:get-option option-name)))
+
 (defun %exit-after-last-detach-p ()
   "True when no clients remain attached AND the exit-unattached option is on — the
    server should terminate (tmux exit-unattached).  Checked only after a real
    client drop, so a freshly-started server with no clients yet never exits."
-  (and (null *clients*)
-       (cl-tmux/options:get-option "exit-unattached")))
+  (%exit-when-empty-and-option-enabled-p *clients* "exit-unattached"))
 
 (defun %exit-when-empty-p ()
   "True when no sessions remain AND exit-empty is on (default) — the server should
    terminate once its last session is destroyed (tmux exit-empty).  The server
    starts with an initial session, so this only becomes true after a session is
    killed during the loop, never at startup."
-  (and (null *server-sessions*)
-       (cl-tmux/options:get-option "exit-empty")))
+  (%exit-when-empty-and-option-enabled-p *server-sessions* "exit-empty"))
 
 (defun %accept-pending-connection (listener listener-fd ready)
   "When LISTENER-FD is in READY, accept and register the new connection.
