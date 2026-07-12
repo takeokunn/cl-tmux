@@ -55,7 +55,7 @@
    (loop for entry in *server-sessions*
          for sess = (cdr entry)
          do (dolist (pane (all-panes sess))
-              (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))
+              (close-pane-pty pane)))
    (setf *running* nil)
    :quit)
 

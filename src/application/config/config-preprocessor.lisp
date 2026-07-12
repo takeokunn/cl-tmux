@@ -18,8 +18,8 @@
 ;;;
 ;;; This file also owns the multi-line joining that must happen before a line
 ;;; is handed to apply-config-line: trailing-backslash continuation lines and
-;;; tmux 3.x brace { ... } command blocks.  load-config-from-stream/-string, the
-;;; top-level stream/string entry points, live here too.
+;;; tmux 3.x brace { ... } command blocks.  The top-level stream/string entry
+;;; points live here too.
 
 (defvar *config-condition-evaluator* nil
   "When non-NIL, a function (string) → string that evaluates a %if condition.
@@ -62,9 +62,8 @@
 
 (defun %line-brace-delta (line)
   "Net unquoted brace depth of LINE: count of '{' minus '}', ignoring braces
-   inside single/double quotes or immediately after a backslash.  Used by
-   load-config-from-stream to detect and join multi-line { ... } command blocks
-   (tmux 3.x brace syntax)."
+   inside single/double quotes or immediately after a backslash.  Used to
+   detect and join multi-line { ... } command blocks (tmux 3.x brace syntax)."
   (let ((delta 0) (i 0) (len (length line)))
     (loop while (< i len) do
       (let ((c (char line i)))
@@ -171,34 +170,3 @@
                          (%read-brace-block line stream)
                          line)))
       (apply-config-line full-line))))
-
-(defun load-config-from-stream (stream)
-  "Apply every directive line read from STREAM, honoring %if/%elif/%else/%endif
-   blocks.  Multi-line { ... } command blocks (tmux 3.x brace syntax) are joined
-   into a single logical directive before being applied.  Returns the count applied."
-  ;; COND-STACK: one state per open %if level — :ACTIVE (this branch is taken),
-  ;; :SEEKING (no branch matched yet; keep evaluating %elif/%else), :TAKEN (a branch
-  ;; already matched; skip the rest), or :DEAD (an ancestor was skipping when this
-  ;; %if began).  A line is applied only when EVERY level is :ACTIVE.  The four
-  ;; states are what a plain skip flag cannot express: distinguishing "still seeking
-  ;; a match" from "a branch already matched" is required for correct %elif chains.
-  (let ((cond-stack nil)
-        (count 0))
-    (loop for raw = (read-line stream nil nil)
-          while raw
-          for line = (%strip-config-comment
-                      (%read-logical-config-line raw stream)) do
-            (let* ((trimmed (string-trim '(#\Space #\Tab #\Return #\Newline) line))
-                   (pp-type (%preprocessor-line-p trimmed)))
-              (if pp-type
-                  (setf cond-stack
-                        (%update-config-cond-stack pp-type trimmed cond-stack))
-                  (when (%apply-config-logical-line line stream cond-stack)
-                    (incf count)))))
-    count))
-
-(defun load-config-from-string (text)
-  "Apply every directive line in TEXT, honoring %if/%else/%endif blocks.
-   Returns the count of directives applied."
-  (with-input-from-string (in text)
-    (load-config-from-stream in)))

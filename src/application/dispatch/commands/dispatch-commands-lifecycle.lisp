@@ -133,7 +133,7 @@
        ;; shells would leak until kill-server).
        (when (zerop (%window-session-count win))
          (dolist (pane (window-panes win))
-           (ignore-errors (pty-close (pane-fd pane) (pane-pid pane)))))
+           (close-pane-pty pane)))
        (cl-tmux/hooks:run-hooks cl-tmux/hooks:+hook-window-unlinked+ win)
        (show-overlay "unlink-window: unlinked"))
       (kill-p
@@ -180,7 +180,7 @@
   (dolist (entry *server-sessions*)
     (let ((sess (cdr entry)))
       (dolist (pane (all-panes sess))
-        (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))))
+        (close-pane-pty pane))))
   (setf *running* nil)
   :quit)
 

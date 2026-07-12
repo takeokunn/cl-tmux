@@ -25,7 +25,7 @@
          (target     (or pane (window-active-pane win)))
          (was-active (eq target (window-active-pane win))))
     (when target
-      (ignore-errors (pty-close (pane-fd target) (pane-pid target))))
+      (close-pane-pty target))
     ;; Fire before window-remove-pane so *server-sessions* lookup in the command
     ;; hook runner can still find the pane (it is removed from the window below).
     (run-hooks +hook-after-kill-pane+ target)
@@ -33,13 +33,7 @@
       (if (null (window-panes win))
           (kill-window session win)
           (progn
-            (when was-active
-              (let* ((remaining (window-panes win))
-                     (last-act  (window-last-active win))
-                     (chosen    (or (and last-act (find last-act remaining))
-                                    survivor
-                                    (first remaining))))
-                (window-select-pane win chosen)))
+            (%select-surviving-pane-after-kill was-active win survivor)
             nil)))))
 
 (defun %window-with-max-id (windows)
@@ -100,20 +94,13 @@
   (let* ((target    (or window (session-active-window session)))
          (killed-id (window-id target))
          (remaining (remove target (session-windows session))))
-    (dolist (pane (window-panes target))
-      (ignore-errors (pty-close (pane-fd pane) (pane-pid pane))))
+    (%close-window-panes target)
     ;; Fire before setf session-windows so *server-sessions* lookup in the command
     ;; hook runner can still find this window under its session.
     (run-hooks +hook-after-kill-window+ target)
     (setf (session-windows session) remaining)
     (session-windows-changed session)
-    (if remaining
-        (progn
-          (when (eq (session-active-window session) target)
-            (session-select-window session (%window-after-kill remaining killed-id)))
-          (%maybe-renumber-windows session)
-          nil)
-        :quit)))
+    (%select-window-after-kill remaining session target killed-id)))
 
 
 ;;; ── Rename / Select ────────────────────────────────────────────────────────
@@ -121,6 +108,10 @@
 ;;; rename_window(Window, Name)   :- set(window-name, Name), run_hooks(after-rename-window).
 ;;; rename_session(Session, Name) :- nonempty(Name), set(session-name, Name).
 ;;; select_window(Session, N)     :- nth(N, windows(Session), W), activate(W).
+
+(defun %nonempty-name-p (name)
+  "T when NAME is a non-empty string."
+  (and name (plusp (length name))))
 
 (defun rename-window (window name &key (disable-automatic-rename t))
   "Set WINDOW's name to NAME.  Empty NAME is a no-op, matching tmux behaviour.
@@ -130,7 +121,7 @@
    path passes :DISABLE-AUTOMATIC-RENAME NIL so repeated title-driven renames keep
    working — otherwise auto-rename would fire only once.  Fires after-rename-window
    and window-renamed in both cases."
-  (when (and window name (plusp (length name)))
+  (when (and window (%nonempty-name-p name))
     (setf (window-name window) name)
     (when disable-automatic-rename
       (setf (window-automatic-rename-p window) nil))
@@ -139,7 +130,7 @@
 
 (defun rename-session (session name)
   "Set SESSION's name to NAME."
-  (when (and session name (plusp (length name)))
+  (when (and session (%nonempty-name-p name))
     (setf (session-name session) name)))
 
 (defun select-window-by-number (session n)
@@ -160,3 +151,31 @@
   (when (and window (window-tree window))
     (prog1 (window-resize-active window direction amount)
       (run-hooks +hook-after-resize-pane+ window))))
+
+(defun %select-surviving-pane-after-kill (was-active win survivor)
+  (when was-active
+    (%select-pane-after-kill win survivor)))
+
+(defun %select-window-after-kill (remaining session target killed-id)
+  (if remaining
+      (progn
+        (when (eq (session-active-window session) target)
+          (session-select-window session (%window-after-kill remaining killed-id)))
+        (%maybe-renumber-windows session)
+        nil)
+      :quit))
+
+(defun %select-pane-after-kill (win survivor)
+  (let* ((remaining (window-panes win))
+         (last-act  (window-last-active win))
+         (chosen    (or (and last-act (find last-act remaining))
+                        survivor
+                        (first remaining))))
+    (window-select-pane win chosen)))
+
+(defun %close-window-panes (target)
+  (dolist (pane (window-panes target))
+    (close-pane-pty pane)))
+
+(defun close-pane-pty (target)
+  (ignore-errors (pty-close (pane-fd target) (pane-pid target))))

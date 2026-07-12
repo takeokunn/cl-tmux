@@ -3,22 +3,34 @@
 ;;; -- Pane process and pipe commands ----------------------------------------
 ;;;
 
+(defun %normalize-command (positionals)
+  (let ((command (format nil "~{~A~^ ~}" positionals)))
+    (and (plusp (length command)) command)))
+
+(defun %parse-respawn-command (session args message)
+  (with-command-input (flags positionals args "cet"
+                             :allowed-flags '(#\k #\t #\c #\e)
+                             :message message)
+    (values (%flag-value flags #\t)
+            (%flag-present-p flags #\k)
+            (%expand-start-dir session (%flag-value flags #\c))
+            (%collect-env-flags flags)
+            (%normalize-command positionals))))
+
+(defun %start-reader-thread-if-new-pane (new-pane) (when new-pane
+                  (start-reader-thread new-pane)
+                  (setf *dirty* t)
+                  t))
+
 (defun %cmd-respawn-pane-arg (session args)
   "respawn-pane [-k] [-t target-pane]: restart
    the target pane's process (default: the active pane).
    -k: kill the existing process first.  WITHOUT -k, respawning a pane whose process
    is still running is an error (tmux behaviour) — use -k to force it.
    This is the scriptable form; the interactive :respawn-pane binding is unchanged."
-  (with-command-input (flags positionals args "cet"
-                             :allowed-flags '(#\k #\t #\c #\e)
-                             :message "respawn-pane: unsupported argument")
-    (let* ((target-str (%flag-value flags #\t))
-           (kill-p (%flag-present-p flags #\k))
-           (raw-dir (%flag-value flags #\c))
-           (start-dir (%expand-start-dir session raw-dir))
-           (extra-env (%collect-env-flags flags))
-           (default-command (format nil "~{~A~^ ~}" positionals)))
-      (with-target-context (target-session win pane session target-str)
+  (multiple-value-bind (target-str kill-p start-dir extra-env default-command)
+      (%parse-respawn-command session args "respawn-pane: unsupported argument")
+    (with-target-context (target-session win pane session target-str)
         (declare (ignore target-session))
         (when (and win pane)
           (if (and (not kill-p) (cl-tmux/model:pane-live-p pane))
@@ -26,13 +38,9 @@
               (show-overlay "respawn-pane: pane is active (use -k to force respawn)")
               (let ((new-pane (respawn-pane session pane
                                             :start-dir start-dir
-                                            :default-command (and (plusp (length default-command))
-                                                                  default-command)
+                                            :default-command default-command
                                             :extra-env extra-env)))
-                (when new-pane
-                  (start-reader-thread new-pane)
-                  (setf *dirty* t)
-                  t))))))))
+                (%start-reader-thread-if-new-pane new-pane)))))))
 
 (defun %cmd-respawn-window-arg (session args)
   "respawn-window [-k] [-t target-window]:
@@ -40,17 +48,9 @@
    -k: kill the existing processes first.  WITHOUT -k, respawning when ANY pane is
    still running is an error (tmux behaviour) — use -k to force it.  Scriptable form; the
    interactive :respawn-window binding is unchanged."
-  (with-command-input (flags positionals args "cet"
-                             :allowed-flags '(#\k #\t #\c #\e)
-                             :message "respawn-window: unsupported argument")
-    (let* ((target-str (%flag-value flags #\t))
-           (win nil)
-           (kill-p (%flag-present-p flags #\k))
-           (raw-dir (%flag-value flags #\c))
-           (start-dir (%expand-start-dir session raw-dir))
-           (extra-env (%collect-env-flags flags))
-           (default-command (let ((command (format nil "~{~A~^ ~}" positionals)))
-                              (and (plusp (length command)) command))))
+  (multiple-value-bind (target-str kill-p start-dir extra-env default-command)
+      (%parse-respawn-command session args "respawn-window: unsupported argument")
+    (let ((win nil))
       (with-target-context (target-session resolved-win target-pane session target-str)
         (declare (ignore target-session target-pane))
         (setf win resolved-win))
@@ -64,7 +64,7 @@
                                               :start-dir start-dir
                                               :default-command default-command
                                               :extra-env extra-env)))
-                  (when new-pane (start-reader-thread new-pane))))
+                  (%start-reader-thread-if-new-pane new-pane)))
               (setf *dirty* t)
               t))))))
 
@@ -91,7 +91,7 @@
     (let* ((only-open (%flag-present-p flags #\o))
            (pipe-in (%flag-present-p flags #\I))
            (pipe-out (%flag-present-p flags #\O))
-           (command   (format nil "~{~A~^ ~}" positionals))
+           (command (%normalize-command positionals))
            (target-str (%flag-value flags #\t)))
       (with-target-context (target-session win resolved-pane session target-str)
         (declare (ignore target-session))
@@ -110,4 +110,3 @@
               (t (pipe-pane-open pane command
                                  :pane-output-to-command-p pane-output-to-command-p
                                  :command-output-to-pane-p command-output-to-pane-p)))))))))
-
