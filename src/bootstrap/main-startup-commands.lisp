@@ -51,25 +51,17 @@
           (%forward-new-session server-name raw-args detach)
           (%run-new-session-locally session-name detach)))))
 
-(defun %flag-value (raw-args flag)
+(defun %startup-flag-value (raw-args flag)
   "Return the value that follows FLAG in RAW-ARGS, or NIL."
   (loop for (arg value) on raw-args by #'cddr
         when (and arg (string= arg flag))
           return value))
 
-(defun %first-positional-arg (raw-args)
-  "Return the first non-empty positional argument in RAW-ARGS, or NIL."
-  (find-if (lambda (arg)
-             (and (stringp arg)
-                  (plusp (length arg))
-                  (not (char= (char arg 0) #\-))))
-           raw-args))
-
 (defun run-has-session (raw-args)
   "Exit 0 when a session named by -t exists, exit 1 otherwise.
    The socket file must exist AND accept connections — a stale socket left by
    a crashed server does not count as a live session (tmux would unlink it)."
-  (let* ((target (%flag-value raw-args "-t"))
+  (let* ((target (%startup-flag-value raw-args "-t"))
          (name   (or target "0"))
          (socket (socket-path name)))
     (if (and (probe-file socket)
@@ -82,9 +74,25 @@
           (sb-ext:exit :code 1)))))
 
 (defun %list-commands-arguments (raw-args)
-  "Return (values FORMAT NAME) for list-commands' no-server stdout path."
-  (values (%flag-value raw-args "-F")
-          (%first-positional-arg raw-args)))
+  "Return (values FORMAT NAME) for list-commands' no-server stdout path.
+   Skips the -F flag's VALUE so it is not mistaken for the positional name —
+   a file-split refactor had replaced this loop with a positional scan that
+   returned the -F argument as the name."
+  (loop with fmt = nil
+        with name = nil
+        with index = 0
+        while (< index (length raw-args))
+        for arg = (nth index raw-args)
+        do (cond
+             ((string= arg "-F")
+              (incf index)
+              (when (< index (length raw-args))
+                (setf fmt (nth index raw-args))))
+             ((and (null name)
+                   (not (string= arg "")))
+              (setf name arg)))
+           (incf index)
+        finally (return (values fmt name))))
 
 (defun run-list-commands (raw-args)
   "Print tmux public command names to stdout and exit.

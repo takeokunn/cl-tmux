@@ -13,7 +13,8 @@
   :depends-on (:cffi           ; C foreign-function interface
                :bordeaux-threads ; portable threads + locks
                :babel            ; string↔octet encoding
-               :cl-ppcre)        ; Perl-compatible regular expressions
+               :cl-ppcre         ; Perl-compatible regular expressions
+               :cl-prolog)       ; dependency-free Prolog engine (cold-path reasoning)
   :components
   ((:module "src"
     :serial t
@@ -333,6 +334,16 @@
        (:file "events-keystroke-repeat-states") ; prefix/root repeat CPS states
        (:file "events-loop-timers") ; CPS process-byte + escape/repeat timer plumbing + synchronize-panes
        (:file "events-loop")))
+     ;; Prolog-backed cold-path reasoning read-model.  Loads after config
+     ;; (for the key-table store) and cl-prolog (a core dependency); never on
+     ;; the hot dispatch path.  See src/reasoning/package.lisp.
+     (:module "reasoning"
+      :serial t
+      :components
+      ((:file "package")
+       (:file "key-rulebase")
+       (:file "key-tables")
+       (:file "command-rulebase")))
      (:module "bootstrap-server"
       :pathname "bootstrap"
       :serial t
@@ -357,9 +368,34 @@
   :in-order-to ((test-op (test-op "cl-tmux/test"))))
 
 (defsystem "cl-tmux/test"
-  :description "Test suite for cl-tmux"
-  :depends-on (:cl-tmux :fiveam)
+  :description "Test suite for cl-tmux (cl-weave, via the FiveAM-surface shim)"
+  :depends-on (:cl-tmux :cl-weave)
   :components #.(symbol-value (find-symbol "*CL-TMUX-TEST-COMPONENTS*" :cl-user))
   ;; Run with: (asdf:test-system :cl-tmux)
   :perform (test-op (op c)
              (symbol-call :cl-tmux/test :run-tests)))
+
+;; The Prolog-backed reasoning read-model now lives in the core `cl-tmux'
+;; system (src/reasoning/, with cl-prolog a core dependency); it powers
+;; cold-path introspection and is compiled into the shipped binary.
+
+;; cl-weave regression suite for the reasoning read-model.  It exercises the
+;; reasoning API through custom cl-weave matchers and reuses cl-prolog's own
+;; cl-weave bridge (`cl-prolog/weave:deftest-queries') for raw Prolog queries.
+;; Run with: (asdf:test-system :cl-tmux/weave)
+(defsystem "cl-tmux/weave"
+  :description "cl-weave suite for the cl-tmux Prolog reasoning read-model."
+  :author "takeokunn <bararararatty@gmail.com>"
+  :license "MIT"
+  :depends-on (:cl-tmux :cl-weave :cl-prolog :cl-prolog/weave)
+  :pathname "tests/weave"
+  :serial t
+  :components ((:file "package")
+               (:file "support")
+               (:file "matchers")
+               (:file "key-reasoning-tests")
+               (:file "entry"))
+  :perform (test-op (op c)
+             (declare (ignore op c))
+             (unless (uiop:symbol-call :cl-tmux/weave-tests :run-weave-tests)
+               (error "cl-tmux cl-weave suite failed."))))

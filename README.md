@@ -145,10 +145,11 @@ you share between tmux and cl-tmux.
 ## Testing
 
 ```bash
-nix flake check -L    # build + full FiveAM suite (same as CI)
+nix flake check -L    # build + full cl-weave suite (same as CI)
 ```
 
-The suite (290+ test files, 11,000+ checks) covers the VT100 emulator,
+The suite (290+ test files, 11,000+ checks) runs on
+[`cl-weave`](https://github.com/takeokunn/cl-weave) and covers the VT100 emulator,
 layout geometry, command dispatch, format engine, options/hooks, copy mode,
 the client/server protocol, and live PTY integration against a real shell.
 PTY tests self-skip where `/dev/ptmx` is unavailable, so sandboxed runs stay
@@ -182,12 +183,45 @@ cl-tmux/
 │   │   ├── config/         #   tmux.conf tokenizer/preprocessor/directives
 │   │   └── dispatch/       #   command table, handlers, control mode
 │   ├── infrastructure/     # adapters: PTY (CFFI), sockets, input, control mode
-│   └── presentation/       # renderer (escape-code frame composer), events, prompt
+│   ├── presentation/       # renderer (escape-code frame composer), events, prompt
+│   └── reasoning/          # cl-prolog cold-path read-models (keys, commands)
 └── tests/
     ├── unit/               # 250+ feature-focused spec files
     ├── integration/        # PTY/socket/runtime integration specs
+    ├── weave/              # cl-weave suite for the reasoning read-model
     └── e2e/                # binary-level smoke test
 ```
+
+### Cold-path reasoning with cl-prolog
+
+`src/reasoning/` is a declarative read-model built on
+[`cl-prolog`](https://github.com/takeokunn/cl-prolog), a dependency-free
+Common Lisp Prolog engine that is a **core dependency** of cl-tmux (compiled
+into the binary). It projects cl-tmux's declarative tables into Prolog
+rulebases and answers relational questions the flat tables cannot express
+directly. It is used strictly on **cold paths** (introspection, validation,
+diagnostics) — never the hot per-keystroke dispatch loop, which stays
+imperative for speed.
+
+Two domains ship today — key bindings and the canonical command table:
+
+```lisp
+(let ((rb (cl-tmux/reasoning:current-key-rulebase)))
+  (cl-tmux/reasoning:key-command rb "prefix" #\c)   ; => :NEW-WINDOW, T
+  (cl-tmux/reasoning:keys-running rb :new-window)   ; => (("prefix" . #\c))
+  (cl-tmux/reasoning:binding-conflicts rb))         ; keys bound differently across tables
+
+(let ((rb (cl-tmux/reasoning:current-command-rulebase)))
+  (cl-tmux/reasoning:command-accepts-flag-p rb "bind-key" "T") ; => T
+  (cl-tmux/reasoning:commands-with-flag rb "t")               ; commands taking -t target
+  (cl-tmux/reasoning:scriptable-commands rb))                 ; commands taking no arguments
+```
+
+Its regression suite (`cl-tmux/weave`) uses
+[`cl-weave`](https://github.com/takeokunn/cl-weave) — custom matchers,
+`around-each` fixtures, a property test, and `cl-prolog`'s own
+`deftest-queries` bridge — and runs as the `weave` flake check
+(`nix build .#checks.<system>.weave`).
 
 The layering rule: `domain` has no I/O; `application` orchestrates domain
 logic through port variables; `infrastructure` provides the real PTY/socket

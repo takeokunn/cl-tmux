@@ -75,17 +75,17 @@
   `(is (not (overlay-active-p))
        "~A must not open an overlay" ,context))
 
-(defmacro assert-member (needle sequence &key (test #'equal) (context "sequence"))
+(defmacro assert-member (needle sequence &key (test '#'equal) (context "sequence"))
   "Assert that SEQUENCE contains NEEDLE under TEST."
   `(is (member ,needle ,sequence :test ,test)
        "~A must contain ~S (got ~S)" ,context ,needle ,sequence))
 
-(defmacro assert-not-member (needle sequence &key (test #'equal) (context "sequence"))
+(defmacro assert-not-member (needle sequence &key (test '#'equal) (context "sequence"))
   "Assert that SEQUENCE does not contain NEEDLE under TEST."
   `(is (null (member ,needle ,sequence :test ,test))
        "~A must not contain ~S (got ~S)" ,context ,needle ,sequence))
 
-(defmacro assert-members (needles sequence &key (test #'equal) (context "sequence"))
+(defmacro assert-members (needles sequence &key (test '#'equal) (context "sequence"))
   "Assert that SEQUENCE contains every item in NEEDLES."
   `(dolist (needle ,needles)
      (assert-member needle ,sequence :test ,test :context ,context)))

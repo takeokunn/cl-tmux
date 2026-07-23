@@ -18,6 +18,7 @@
 ;;; each argument must be declared in FLAG-SPECS, and unknown flags are
 ;;; rejected instead of being silently treated as positional input.
 
+(eval-when (:compile-toplevel :load-toplevel :execute)
 (defun %flag-parser-clause (spec arg-sym args-sym index-sym)
   "Return the COND clause that handles SPEC for a generated flag parser."
   (ecase (first spec)
@@ -34,7 +35,7 @@
          (incf ,index-sym)
          (when (< ,index-sym (length ,args-sym))
            (setf ,variable (nth ,index-sym ,args-sym))
-           (incf ,index-sym)))))))
+           (incf ,index-sym))))))))
 
 (defmacro define-flag-parser (parser-name (&rest defaults) &rest flag-specs)
   "Define PARSER-NAME as a function (ARGS) → (values ...) that parses FLAGS.

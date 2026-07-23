@@ -27,4 +27,57 @@ Initial public development. Highlights of what the tree contains today:
   variable assignments, and `source-file`.
 - Client/server over per-user Unix sockets (`-L`/`-S`, `$TMUX_TMPDIR`),
   session groups sharing one window set, control mode (`-C`).
-- FiveAM test suite (11,000+ checks) run hermetically via `nix flake check`.
+- Test suite (11,000+ checks) run hermetically via `nix flake check`, now on
+  the [`cl-weave`](https://github.com/takeokunn/cl-weave) framework.
+- Cold-path reasoning read-models built on the dependency-free
+  [`cl-prolog`](https://github.com/takeokunn/cl-prolog) engine, now a **core
+  dependency** compiled into the binary (`src/reasoning/`). Two declarative
+  domains are projected into Prolog rulebases and queried for relations the
+  flat tables cannot express directly:
+  - **key bindings** — resolution, reverse lookup, cross-table conflicts,
+    root-shadowing, and repeatable-command inference;
+  - **command metadata** — the canonical command table with derived
+    `accepts-flag`, `scriptable`, and flag-reverse-lookup relations.
+  Reasoning is strictly cold-path (introspection/validation); the hot
+  per-keystroke dispatch loop stays imperative for speed.
+- `cl-weave` regression suite (`cl-tmux/weave`) for the reasoning models, using
+  custom matchers, `around-each` fixtures, a property test, and `cl-prolog`'s
+  own `deftest-queries` bridge; exposed as the `weave` flake check.
+
+### Changed
+
+- **Test framework migrated from FiveAM to cl-weave.** The `fiveam` dependency
+  is gone from the ASDF test system and the Nix checks. A small compatibility
+  shim (`tests/fiveam-compat.lisp`) maps the FiveAM authoring surface
+  (`def-suite` / `in-suite` / `test` / `is` / `signals` / …) onto cl-weave's
+  registration engine, so the ~296 test files run unchanged while cl-weave
+  registers, runs (single-worker sequential), and reports every check. The
+  runner (`run-tests`) drives `cl-weave:run-all`; per-test thread cleanup runs
+  through a root `after-each` hook.
+
+### Fixed
+
+- `main-startup-flags.lisp`: wrap the `%flag-parser-clause` helper in
+  `eval-when` so `define-flag-parser` can expand on a cold compile (the helper
+  and its macro-time callers now live in one file after the bootstrap split).
+- Restored `load-config-from-stream` / `load-config-from-string` in
+  `config-preprocessor.lisp`: a file-split refactor dropped these two exported
+  loaders while their callers (`load-config-file`) and exports remained,
+  leaving config-file loading undefined at runtime.
+- Renamed the startup-only `%flag-value` (flat arg-list scanner, 3 callers) to
+  `%startup-flag-value` to end a name collision with dispatch's `%flag-value`
+  (alist accessor, 95 callers). Because the startup file loads last, its
+  definition had been clobbering dispatch's, breaking every flag-taking
+  command (e.g. `switch-client -T`, modifier-arrow resize) at runtime.
+- Moved the `with-loop-safe-error` macro to `server-multi-dispatch.lisp` (the
+  first file that uses it); it had been defined in `server-multi.lisp`, which
+  loads later, so the multi-client command handlers compiled the macro calls as
+  undefined-function calls and left `CONDITION` unbound at runtime.
+- Fixed an infinite loop in `%consume-global-socket-flags`: its helper
+  `%consume-socket-flag` popped its own *local* argv, so the caller never
+  advanced and spun forever on the first `-L`/`-S` — hanging every
+  `cl-tmux -L <name> <command>` at startup. The helper now returns the
+  remaining argv.
+- Restored the `-F`-skipping loop in `%list-commands-arguments`; a refactor had
+  replaced it with a positional scan that returned the `-F` format value as the
+  command name.

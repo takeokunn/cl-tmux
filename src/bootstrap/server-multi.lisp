@@ -45,17 +45,8 @@
   "List of CLIENT-CONN structs currently attached to the multi-client server.
    Mutated only by the single server event loop, so it needs no locking.")
 
-(defmacro with-loop-safe-error (binding &body body)
-  "Run BODY, catching any ERROR so one bad client/command can never wedge the
-   multi-client event loop.  On success, returns BODY's value; on an ERROR,
-   evaluates and returns ON-ERROR instead — optionally with the condition bound
-   to CONDITION-VAR so ON-ERROR can log it.  This is the single shape behind
-   this file's 'never let one client take down the server loop' invariant."
-  (let ((condition-var (first binding))
-        (on-error (getf (rest binding) :on-error)))
-    `(handler-case (progn ,@body)
-       (error ,(if condition-var (list condition-var) '())
-         ,on-error))))
+;;; with-loop-safe-error is defined in server-multi-dispatch.lisp (which loads
+;;; first) so it is available at compile time to every user, including here.
 
 (define-multi-msg-dispatch
   ;; EOF: peer closed the connection.
