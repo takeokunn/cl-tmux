@@ -14,7 +14,12 @@
                :bordeaux-threads ; portable threads + locks
                :babel            ; string↔octet encoding
                :cl-ppcre         ; Perl-compatible regular expressions
-               :cl-prolog)       ; dependency-free Prolog engine (cold-path reasoning)
+               :cl-prolog        ; dependency-free Prolog engine (cold-path reasoning)
+               :cl-cli           ; startup argv/flag parsing (main-startup-flags)
+               :cl-boundary-kit  ; process boundary for run-shell/if-shell
+               :cl-dataflow      ; copy-mode lifecycle state machine (src/dataflow)
+               :cl-parser-kit    ; commands-tokenizer combinator rewrite
+               :cl-tty-kit)      ; true-color -> 256/16 downsampling (renderer-format)
   :components
   ((:module "src"
     :serial t
@@ -344,6 +349,15 @@
        (:file "key-rulebase")
        (:file "key-tables")
        (:file "command-rulebase")))
+     ;; cl-dataflow-backed cold-path read-model: the copy-mode lifecycle as an
+     ;; inspectable state machine.  Loads after domain/terminal (screen
+     ;; accessors) and cl-prolog (a cl-dataflow dependency); never on the hot
+     ;; dispatch path.  See src/dataflow/package.lisp.
+     (:module "dataflow"
+      :serial t
+      :components
+      ((:file "package")
+       (:file "copy-mode-lifecycle")))
      (:module "bootstrap-server"
       :pathname "bootstrap"
       :serial t
@@ -399,3 +413,21 @@
              (declare (ignore op c))
              (unless (uiop:symbol-call :cl-tmux/weave-tests :run-weave-tests)
                (error "cl-tmux cl-weave suite failed."))))
+
+;; cl-weave regression suite for the cl-dataflow copy-mode lifecycle
+;; read-model (src/dataflow/), mirroring cl-tmux/weave above.
+;; Run with: (asdf:test-system :cl-tmux/dataflow)
+(defsystem "cl-tmux/dataflow"
+  :description "cl-weave suite for the cl-tmux cl-dataflow copy-mode lifecycle read-model."
+  :author "takeokunn <bararararatty@gmail.com>"
+  :license "MIT"
+  :depends-on (:cl-tmux :cl-weave :cl-dataflow)
+  :pathname "tests/dataflow"
+  :serial t
+  :components ((:file "package")
+               (:file "copy-mode-lifecycle-tests")
+               (:file "entry"))
+  :perform (test-op (op c)
+             (declare (ignore op c))
+             (unless (uiop:symbol-call :cl-tmux/dataflow-tests :run-dataflow-tests)
+               (error "cl-tmux cl-dataflow suite failed."))))

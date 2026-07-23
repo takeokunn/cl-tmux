@@ -252,7 +252,11 @@
                 (let ((sb-ext:*posix-argv* (list "cl-tmux" "-Z")))
                   (cl-tmux::main))))))
     (is (eql 1 exit-code) "unknown dash-flag must exit 1")
-    (is (eql 0 (search "usage: cl-tmux" errout))
+    ;; cl-cli (main-startup-flags.lisp *cli-app*) now rejects -Z during global
+    ;; flag parsing and prints its own diagnostic (e.g. "cl-tmux: Unknown
+    ;; option...") before the usage block, so "usage: cl-tmux" no longer
+    ;; starts at position 0 -- it just needs to be present.
+    (is-true (search "usage: cl-tmux" errout)
         "unknown dash-flag must print usage to stderr")
     (is-false standalone-called
               "unknown dash-flag must not fall through to run-standalone")))

@@ -179,16 +179,18 @@ cl-tmux/
 │   │   ├── buffer/         #   paste buffers
 │   │   └── ports/          #   port variables (PTY, repository interfaces)
 │   ├── application/        # use cases: command dispatch, config loading
-│   │   ├── commands/       #   command implementations (copy mode, panes, …)
-│   │   ├── config/         #   tmux.conf tokenizer/preprocessor/directives
+│   │   ├── commands/       #   command implementations; tokenizer on cl-parser-kit
+│   │   ├── config/         #   tmux.conf directives; shell calls on cl-boundary-kit
 │   │   └── dispatch/       #   command table, handlers, control mode
 │   ├── infrastructure/     # adapters: PTY (CFFI), sockets, input, control mode
-│   ├── presentation/       # renderer (escape-code frame composer), events, prompt
-│   └── reasoning/          # cl-prolog cold-path read-models (keys, commands)
+│   ├── presentation/       # renderer (cl-tty-kit colour downsampling), events, prompt
+│   ├── reasoning/          # cl-prolog cold-path read-models (keys, commands)
+│   └── dataflow/           # cl-dataflow cold-path read-model (copy-mode lifecycle)
 └── tests/
     ├── unit/               # 250+ feature-focused spec files
     ├── integration/        # PTY/socket/runtime integration specs
     ├── weave/              # cl-weave suite for the reasoning read-model
+    ├── dataflow/           # cl-weave suite for the copy-mode lifecycle read-model
     └── e2e/                # binary-level smoke test
 ```
 
@@ -222,6 +224,37 @@ Its regression suite (`cl-tmux/weave`) uses
 `around-each` fixtures, a property test, and `cl-prolog`'s own
 `deftest-queries` bridge — and runs as the `weave` flake check
 (`nix build .#checks.<system>.weave`).
+
+### Dogfooded sibling libraries
+
+Beyond `cl-prolog` / `cl-weave` above, cl-tmux is a testbed for four more
+dependency-light [`nerima-lisp`](https://github.com/nerima-lisp) libraries,
+each adopted where it is a genuine fit for something cl-tmux already does by
+hand — not bolted on beside it:
+
+- [`cl-cli`](https://github.com/nerima-lisp/cl-cli) parses the top-level
+  `cl-tmux [flags] [command [flags]]` global flags (`main-startup-flags.lisp`
+  `*cli-app*`), replacing the old ad hoc `-L`/`-S`-only scanner with real
+  tmux(1) flag parity — flags may now appear in any order before the command
+  word.
+- [`cl-boundary-kit`](https://github.com/nerima-lisp/cl-boundary-kit)
+  supplies the process boundary (`cl-tmux/config:*process-boundary*`) that
+  `run-shell` / `if-shell` and config-time shell directives run through, so
+  tests can swap in a fake process without shelling out for real.
+- [`cl-dataflow`](https://github.com/nerima-lisp/cl-dataflow) models the
+  copy-mode lifecycle as an inspectable state machine (`src/dataflow/`), the
+  cl-dataflow counterpart to `src/reasoning/` above — same cold-path-only
+  rule, same `nix build .#checks.<system>.dataflow` pattern.
+- [`cl-tty-kit`](https://github.com/nerima-lisp/cl-tty-kit) contributes
+  `rgb-to-256` for `-2` (force-256-colour) true-colour downsampling in
+  `renderer-format.lisp`, cl-tmux's first outer-terminal colour-capability
+  negotiation.
+- [`cl-parser-kit`](https://github.com/nerima-lisp/cl-parser-kit) is the
+  tokenizer framework `commands-tokenizer.lisp`'s shell-style argument
+  splitter runs on — one custom rule for the quote/escape-joining scan (no
+  generic library has tmux's "quotes extend the current argument" grammar
+  built in) plus a whitespace-skip rule, composed through
+  `cl-parser-kit:tokenize-string`.
 
 The layering rule: `domain` has no I/O; `application` orchestrates domain
 logic through port variables; `infrastructure` provides the real PTY/socket

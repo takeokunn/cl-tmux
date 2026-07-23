@@ -43,6 +43,38 @@ Initial public development. Highlights of what the tree contains today:
 - `cl-weave` regression suite (`cl-tmux/weave`) for the reasoning models, using
   custom matchers, `around-each` fixtures, a property test, and `cl-prolog`'s
   own `deftest-queries` bridge; exposed as the `weave` flake check.
+- Five more dependency-light sibling libraries adopted as **core
+  dependencies**, each replacing or augmenting a hand-rolled piece of the
+  same concern it specializes in:
+  - [`cl-cli`](https://github.com/nerima-lisp/cl-cli) — the top-level
+    `cl-tmux [flags] [command [flags]]` entry point (`main-startup.lisp` /
+    `main-startup-flags.lisp` `*cli-app*`) now parses real tmux(1) global
+    flags (`-2`, `-C`/`-CC`, `-D`, `-L`, `-N`, `-S`, `-T`, `-V`, `-c`, `-f`,
+    `-h`, `-l`, `-u`, `-v`, verified against `man 1 tmux`) in any order, fixing
+    a real bug where a flag before `-C`/`-V` (e.g. `cl-tmux -L sock -C`) used
+    to hard-fail with a usage error.
+  - [`cl-tty-kit`](https://github.com/nerima-lisp/cl-tty-kit) —
+    `rgb-to-256` downsamples true-colour SGR output to the 256-colour palette
+    when `-2` is given (`renderer-format.lisp` `*color-downsample-fn*`), the
+    first cl-tmux terminal-capability negotiation beyond emitting whatever a
+    style asks for unconditionally.
+  - [`cl-boundary-kit`](https://github.com/nerima-lisp/cl-boundary-kit) — a
+    process boundary (`cl-tmux/config:*process-boundary*`) now sits behind
+    every `run-shell` / `if-shell` subprocess call (config-time and
+    command-time), swappable for `make-test-process-boundary` /
+    `make-recording-process-boundary` in tests without touching a real shell.
+  - [`cl-dataflow`](https://github.com/nerima-lisp/cl-dataflow) — a new
+    cold-path read-model (`src/dataflow/`, mirroring `src/reasoning/`) models
+    the copy-mode lifecycle already documented as a Prolog-style rule table
+    atop `commands-copy-mode.lisp` as an inspectable `cl-dataflow` state
+    machine, with DOT/Mermaid export; regression-tested by the new
+    `cl-tmux/dataflow` cl-weave suite (`dataflow` flake check).
+  - [`cl-parser-kit`](https://github.com/nerima-lisp/cl-parser-kit) —
+    `commands-tokenizer.lisp`'s shell-style argument splitter is now one
+    custom `cl-parser-kit` token rule (the quote/escape-joining scan, which
+    has no off-the-shelf equivalent) composed with a whitespace-skip rule and
+    run through `tokenize-string`, inheriting span tracking and the library's
+    tokenizer resource-limit guards for free.
 
 ### Changed
 

@@ -39,6 +39,13 @@
    #:apply-config-directive
    #:apply-option-side-effects
    #:config-file-path
+   ;; -f startup-flag override (set by the cl-cli global-option parser in
+   ;; main-startup-flags.lisp), consulted first by config-file-path.
+   #:*config-file-override*
+   ;; cl-boundary-kit process boundary shared by config-time shell directives
+   ;; and run-shell/if-shell (commands-shell.lisp); see
+   ;; config-directives-runtime-services.lisp.
+   #:*process-boundary*
    ;; %if condition evaluator hook (set by top-level package)
    #:*config-condition-evaluator*
    ;; Mouse-reporting callback hook (set by orchestrate/events-loop layer)

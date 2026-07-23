@@ -51,7 +51,11 @@
    #:disable-focus-reporting
    #:parse-style-string
    #:style-to-sgr
-   #:%popup-border-charset))
+   #:%popup-border-charset
+   ;; Terminal colour-capability downsampling hook, set from the -2 startup
+   ;; flag (main-startup-flags.lisp); see renderer-format.lisp.
+   #:*color-downsample-fn*
+   #:%rgb-int-to-256))
 
 (defpackage #:cl-tmux/input
   (:use #:cl #:cffi

@@ -42,12 +42,20 @@
                             (string-right-trim "/" base)))
           (merge-pathnames ".tmux.conf" home))))
 
+(defvar *config-file-override* nil
+  "Explicit config-file path from the startup -f flag (see the cl-cli app in
+   main-startup-flags.lisp), a string or pathname.  Takes precedence over
+   $CL_TMUX_CONF and the XDG search, mirroring real tmux(1)'s -f file.")
+
 (defun config-file-path ()
-  "Path to the user config file, honoring $CL_TMUX_CONF then the XDG Base
-   Directory spec ($XDG_CONFIG_HOME, default ~/.config).  See %config-path-from."
-  (%config-path-from (sb-ext:posix-getenv "CL_TMUX_CONF")
-                     (sb-ext:posix-getenv "XDG_CONFIG_HOME")
-                     (user-homedir-pathname)))
+  "Path to the user config file: *config-file-override* (-f) first, then
+   $CL_TMUX_CONF, then the XDG Base Directory spec ($XDG_CONFIG_HOME, default
+   ~/.config).  See %config-path-from."
+  (if *config-file-override*
+      (pathname *config-file-override*)
+      (%config-path-from (sb-ext:posix-getenv "CL_TMUX_CONF")
+                         (sb-ext:posix-getenv "XDG_CONFIG_HOME")
+                         (user-homedir-pathname))))
 
 (defun load-config-file (&optional (path (config-file-path)))
   "Load and apply the config file at PATH if it exists (returns the count of

@@ -26,6 +26,34 @@
 ;;; emit_colour(fg/bg, 16-255)    :- palette_256(fg/bg, n).
 ;;; emit_colour(fg/bg, 0x1RRGGBB) :- true_colour(fg/bg, r, g, b).
 
+;;; ── Terminal colour-capability downsampling (cl-tty-kit) ────────────────────
+;;;
+;;; Real tmux's -2 flag ("force 256-colour") exists because not every outer
+;;; terminal understands 24-bit SGR (38;2;R;G;B).  cl-tmux always emitted
+;;; true-colour unconditionally; *color-downsample-fn*, set from -2 by
+;;; %apply-global-cli-invocation (main-startup-flags.lisp), routes true-colour
+;;; cell values through cl-tty-kit:rgb-to-256 before classification so -2
+;;; sessions degrade gracefully instead of leaking raw 24-bit escapes.
+
+(defvar *color-downsample-fn* nil
+  "Optional function (packed-rgb-int) -> palette-index, applied to TRUE-COLOR
+   values (bit 24 set) before %EMIT-FG/%EMIT-BG classify them.  NIL (the
+   default) emits true-colour unchanged, so the hot per-cell path pays only a
+   single NULL check in the common case.")
+
+(defun %rgb-int-to-256 (n)
+  "Downsample packed true-colour int N (bit 24 set; RGB in bits 16-0) to the
+   nearest xterm 256-palette index via cl-tty-kit:rgb-to-256."
+  (let ((rgb (logand n #xFFFFFF)))
+    (cl-tty-kit:rgb-to-256 (ash rgb -16) (logand (ash rgb -8) #xFF) (logand rgb #xFF))))
+
+(declaim (inline %maybe-downsample-color))
+(defun %maybe-downsample-color (n)
+  "Return N, or its *color-downsample-fn* projection when N is true-colour."
+  (if (and *color-downsample-fn* (logbitp 24 n))
+      (funcall *color-downsample-fn* n)
+      n))
+
 ;;; %EMIT-FG and %EMIT-BG are inlined: render-pane calls render-cell-attrs up
 ;;; to ~1920 times per frame; eliminating the two call frames is measurable.
 (declaim (inline %emit-fg %emit-bg))
@@ -54,21 +82,22 @@
                ;; as a "no colour" sentinel.  Normal callers always pass (unsigned-byte 25)
                ;; values from cell-fg / cell-bg, which are always non-negative.
                (when (>= n 0)
-                 (cond
-                   ;; True-color: bit 24 set → #x1RRGGBB
-                   ((logbitp 24 n)
-                    (let* ((rgb (logand n #xFFFFFF))
-                           (r (ash rgb -16))
-                           (g (logand (ash rgb -8) #xFF))
-                           (b (logand rgb #xFF)))
-                      (format stream ";~A;~D;~D;~D" ,tc-prefix r g b)))
-                   ((<= 0    n  7)   (format stream ";~D"      (+ ,std-base    n)))
-                   ((<= 8    n 15)   (format stream ";~D"      (+ ,bright-base n)))
-                   ((<= 16   n 255)  (format stream ";~A;~D"   ,palette-prefix n))
-                   ;; Defensive fallback for values 256-#xFFFFFF without bit 24.
-                   ;; Unreachable via apply-sgr (palette clamped to 255, true-color
-                   ;; sets bit 24). Emits the default-colour reset code.
-                   (t                (format stream ";~D"       ,default-val)))))))
+                 (let ((n (%maybe-downsample-color n)))
+                   (cond
+                     ;; True-color: bit 24 set → #x1RRGGBB (unless downsampled above)
+                     ((logbitp 24 n)
+                      (let* ((rgb (logand n #xFFFFFF))
+                             (r (ash rgb -16))
+                             (g (logand (ash rgb -8) #xFF))
+                             (b (logand rgb #xFF)))
+                        (format stream ";~A;~D;~D;~D" ,tc-prefix r g b)))
+                     ((<= 0    n  7)   (format stream ";~D"      (+ ,std-base    n)))
+                     ((<= 8    n 15)   (format stream ";~D"      (+ ,bright-base n)))
+                     ((<= 16   n 255)  (format stream ";~A;~D"   ,palette-prefix n))
+                     ;; Defensive fallback for values 256-#xFFFFFF without bit 24.
+                     ;; Unreachable via apply-sgr (palette clamped to 255, true-color
+                     ;; sets bit 24). Emits the default-colour reset code.
+                     (t                (format stream ";~D"       ,default-val))))))))
         specs)))
 
 (define-colour-emitters

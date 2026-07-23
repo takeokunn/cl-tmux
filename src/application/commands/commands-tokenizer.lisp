@@ -8,6 +8,18 @@
 ;;;; '...' is a literal span, "..." allows backslash escapes, and a bare \\ escapes
 ;;;; the next character.  Adjacent spans join into one argument (foo"bar baz" →
 ;;;; foobar baz).
+;;;;
+;;;; Built on cl-parser-kit's tokenizer framework (cl-parser-kit:tokenizer /
+;;;; token-rule / tokenize-string): a skipped whitespace rule plus one custom
+;;;; :argument rule whose matcher runs the quote/escape-joining scan below and
+;;;; reports how many source characters it consumed, exactly the contract
+;;;; cl-parser-kit:make-token-rule expects.  That scan is the one piece with
+;;;; no off-the-shelf cl-parser-kit rule -- quotes and escapes don't open a
+;;;; new token the way they would in a typical language lexer, they extend
+;;;; the CURRENT argument -- so it stays hand-written; what cl-parser-kit
+;;;; contributes is the rule/skip composition, span tracking, and the same
+;;;; resource-limit guards (*maximum-tokenizer-source-length* et al.) every
+;;;; other cl-tmux tokenizer built on it gets for free.
 
 (defun %consume-single-quoted (string start length accumulator)
   "Consume a single-quoted literal span from STRING beginning at START.
@@ -35,12 +47,49 @@
                         (incf index))))
     (if (< index length) (1+ index) index))) ; skip closing quote when present
 
-(defun %flush-tokenized-argument (accumulator arguments in-arg)
-  "Flush ACCUMULATOR into ARGUMENTS when IN-ARG is true.
-   Returns two values: the updated ARGUMENTS list and the new IN-ARG state."
-  (if in-arg
-      (values (cons (get-output-stream-string accumulator) arguments) nil)
-      (values arguments in-arg)))
+(defun %argument-token-matcher (source index)
+  "cl-parser-kit token-rule matcher for one tmux-style argument: a maximal run
+   of plain characters, \\-escaped characters, and '...'/\"...\" spans, joined
+   with no separator (foo\"bar baz\" → one token \"foobar baz\").  Stops before
+   whitespace or the end of SOURCE.  Returns (values ok consumed-length text
+   value) per the cl-parser-kit:make-token-rule matcher contract; (values nil
+   index) when INDEX is already whitespace or end of input."
+  (let ((length       (length source))
+        (accumulator  (make-string-output-stream))
+        (position     index))
+    (loop while (and (< position length)
+                     (not (member (char source position) '(#\Space #\Tab))))
+          do (let ((character (char source position)))
+               (cond
+                 ((char= character #\')
+                  (setf position (%consume-single-quoted source position length accumulator)))
+                 ((char= character #\")
+                  (setf position (%consume-double-quoted source position length accumulator)))
+                 ((and (char= character #\\) (< (1+ position) length))
+                  (write-char (char source (1+ position)) accumulator)
+                  (incf position 2))
+                 (t
+                  (write-char character accumulator)
+                  (incf position)))))
+    (if (> position index)
+        (let ((text (get-output-stream-string accumulator)))
+          (values t (- position index) text text))
+        (values nil index))))
+
+(defparameter *command-string-tokenizer*
+  (cl-parser-kit:make-tokenizer
+   :rules (list
+           ;; Only space/tab separate arguments (not every char-whitespace-p
+           ;; class member), matching the original hand-rolled scanner: any
+           ;; other whitespace, e.g. a literal newline, stays inside its
+           ;; argument.
+           (cl-parser-kit:make-predicate-rule
+            :whitespace (lambda (ch) (member ch '(#\Space #\Tab))) :skip-p t)
+           (cl-parser-kit:make-token-rule :type :argument
+                                          :matcher #'%argument-token-matcher)))
+  "Shared cl-parser-kit tokenizer for tokenize-command-string.  Stateless and
+   reusable across calls: every rule matcher is a pure function of (source
+   index).")
 
 (defun tokenize-command-string (string)
   "Split STRING into a list of argument strings, shell-style.
@@ -48,36 +97,5 @@
    escapes; a bare \\ escapes the next character; adjacent spans concatenate.
    Unterminated quotes are tolerated (consumed to end of string).  An explicitly
    quoted empty token (e.g. '') yields an empty-string argument."
-  (let ((arguments   nil)
-        (accumulator (make-string-output-stream))
-        (in-arg      nil)
-        (index       0)
-        (length      (length string)))
-    (loop while (< index length)
-          for character = (char string index)
-          do (cond
-               ((member character '(#\Space #\Tab))
-                (multiple-value-bind (new-arguments new-in-arg)
-                    (%flush-tokenized-argument accumulator arguments in-arg)
-                  (setf arguments new-arguments
-                        in-arg new-in-arg))
-                (incf index))
-               ((char= character #\')
-                (setf in-arg t
-                      index (%consume-single-quoted string index length accumulator)))
-               ((char= character #\")
-                (setf in-arg t
-                      index (%consume-double-quoted string index length accumulator)))
-               ((and (char= character #\\) (< (1+ index) length))
-                (setf in-arg t)
-                (write-char (char string (1+ index)) accumulator)
-                (incf index 2))
-               (t
-                (setf in-arg t)
-                (write-char character accumulator)
-                (incf index))))
-    (multiple-value-bind (new-arguments new-in-arg)
-        (%flush-tokenized-argument accumulator arguments in-arg)
-      (declare (ignore new-in-arg))
-      (setf arguments new-arguments))
-    (nreverse arguments)))
+  (map 'list #'cl-parser-kit:token-text
+       (cl-parser-kit:tokenize-string string *command-string-tokenizer*)))

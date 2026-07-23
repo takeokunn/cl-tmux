@@ -38,13 +38,18 @@
      ,timeout))
 
 (defun %run-shell-program (shell command &key output error-output timeout directory)
-  "Run COMMAND through SHELL with an explicit subprocess TIMEOUT and DIRECTORY."
-  (uiop:run-program (list shell "-c" command)
-                    :output output
-                    :error-output error-output
-                    :ignore-error-status t
-                    :timeout timeout
-                    :directory directory))
+  "Run COMMAND through SHELL via cl-tmux/config:*process-boundary*, with an
+   explicit subprocess TIMEOUT and DIRECTORY.  Returns (values stdout-string
+   stderr-string exit-code), matching uiop:run-program's prior calling
+   convention so run-shell / if-shell need no further changes."
+  (let ((result (cl-boundary-kit:process-boundary-run
+                 cl-tmux/config:*process-boundary* shell
+                 :arguments (list "-c" command)
+                 :output output
+                 :error-output error-output
+                 :timeout timeout
+                 :directory directory)))
+    (values (getf result :stdout) (getf result :stderr) (getf result :exit-code))))
 
 (defun %run-shell-delay (delay)
   "Wait DELAY seconds before launching a run-shell subprocess."

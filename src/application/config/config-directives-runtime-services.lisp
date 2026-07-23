@@ -2,17 +2,28 @@
 
 ;;; Runtime services shared by config-time shell directives.
 
+(defvar *process-boundary* (cl-boundary-kit:make-process-boundary)
+  "The cl-boundary-kit process boundary run-shell/if-shell (commands-shell.lisp)
+   and config-time shell directives (this file) shell out through.  Real
+   subprocess execution by default; tests rebind it to
+   cl-boundary-kit:make-test-process-boundary / make-recording-process-boundary
+   for deterministic run-shell/if-shell specs that never touch a real shell.")
+
 (defconstant +config-shell-command-timeout+ 30
   "Seconds to allow config-time shell directives to run.")
 
 (defun %run-config-shell-command (command &key combine-stderr directory)
-  "Run COMMAND through /bin/sh while loading config, with a bounded lifetime."
-  (uiop:run-program (list "/bin/sh" "-c" command)
-                    :output :string
-                    :error-output (when combine-stderr :output)
-                    :ignore-error-status t
-                    :timeout +config-shell-command-timeout+
-                    :directory directory))
+  "Run COMMAND through /bin/sh while loading config, with a bounded lifetime.
+   Returns (values stdout-string stderr-string exit-code), matching
+   uiop:run-program's prior :output :string calling convention."
+  (let ((result (cl-boundary-kit:process-boundary-run
+                 *process-boundary* "/bin/sh"
+                 :arguments (list "-c" command)
+                 :output :string
+                 :error-output (when combine-stderr :output)
+                 :timeout +config-shell-command-timeout+
+                 :directory directory)))
+    (values (getf result :stdout) (getf result :stderr) (getf result :exit-code))))
 
 (defun %run-config-shell-command-safe (command &key combine-stderr directory delay)
   "Run COMMAND and return NIL if the shell process signals a serious condition."
