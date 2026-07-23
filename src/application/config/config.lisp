@@ -28,8 +28,8 @@
 (defun %prefix-control-byte (rest)
   "Map REST (the part after a \"C-\"/\"^\" prefix) to its control BYTE, or NIL.
    C-a..C-z -> 1..26; C-Space / C-@ -> 0 (NUL); C-[ C-\\ C-] C-^ C-_ -> 27..31.
-   Self-contained (config.lisp loads before config-tokenizer.lisp), so it does
-   not call %parse-control-char."
+   config-tokenizer.lisp's %PARSE-CONTROL-CHAR (loaded after this file)
+   delegates here for the same mapping, wrapping the result in CODE-CHAR."
   (cond
     ((string-equal rest "Space") 0)
     ((= (length rest) 1)

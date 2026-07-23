@@ -72,7 +72,19 @@
       ;; Shape check: every entry is a (table . key) cons with a non-root table.
       (dolist (entry (shadowing-bindings *rulebase*))
         (expect entry :to-satisfy #'consp)
-        (expect (car entry) :not :to-equal cl-tmux/config:+table-root+))))
+        (expect (car entry) :not :to-equal cl-tmux/config:+table-root+)))
+
+    (it "lists unique bindings via negation-as-failure, disjoint from shadowing-bindings"
+      ;; unique-binding/2 is unique-binding(Table,Key) :- binding(Table,Key,_),
+      ;; \+ binding(root,Key,_) — every non-root binding is either a shadow of a
+      ;; root binding or unique; the two sets never overlap.
+      (let ((shadowed (shadowing-bindings *rulebase*))
+            (unique (unique-bindings *rulebase*)))
+        (expect unique :to-satisfy #'consp)
+        (dolist (entry unique)
+          (expect entry :to-satisfy #'consp)
+          (expect (car entry) :not :to-equal cl-tmux/config:+table-root+)
+          (expect (member entry shadowed :test #'equal) :to-be-falsy)))))
 
   (describe "explanation"
     (it "explains a bound key as a readable string"

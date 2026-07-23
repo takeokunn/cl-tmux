@@ -141,23 +141,25 @@
                                 :single-key single-key
                                 :history *prompt-history*
                                 :initial initial)))
-    ;; -i: run the template against the in-progress input on every edit.
-    (when (and (%flag-present-p flags #\i)
-               has-template
-               cl-tmux/prompt:*prompt*)
-      (setf (cl-tmux/prompt:prompt-on-change cl-tmux/prompt:*prompt*)
-            #'run-template))
-    ;; -N: the prompt accepts numeric key presses only.
-    (when (and (%flag-present-p flags #\N)
-               cl-tmux/prompt:*prompt*)
-      (setf (cl-tmux/prompt:prompt-numeric-only cl-tmux/prompt:*prompt*)
-            t))
-    ;; -e: close the prompt when the client loses focus (?1004 focus-out).
-    (when (and (%flag-present-p flags #\e)
-               cl-tmux/prompt:*prompt*)
-      (setf (cl-tmux/prompt:prompt-close-on-focus-out
-             cl-tmux/prompt:*prompt*)
-            t))))
+    (macrolet ((when-prompt-flag ((flag-char &optional extra-condition) &body body)
+                 "Run BODY when FLAG-CHAR is present (and EXTRA-CONDITION, if
+                  given, holds) and a prompt overlay is active — the shared
+                  guard behind command-prompt's -i/-N/-e post-configuration."
+                 `(when (and (%flag-present-p flags ,flag-char)
+                             ,@(when extra-condition (list extra-condition))
+                             cl-tmux/prompt:*prompt*)
+                    ,@body)))
+      ;; -i: run the template against the in-progress input on every edit.
+      (when-prompt-flag (#\i has-template)
+        (setf (cl-tmux/prompt:prompt-on-change cl-tmux/prompt:*prompt*)
+              #'run-template))
+      ;; -N: the prompt accepts numeric key presses only.
+      (when-prompt-flag (#\N)
+        (setf (cl-tmux/prompt:prompt-numeric-only cl-tmux/prompt:*prompt*) t))
+      ;; -e: close the prompt when the client loses focus (?1004 focus-out).
+      (when-prompt-flag (#\e)
+        (setf (cl-tmux/prompt:prompt-close-on-focus-out cl-tmux/prompt:*prompt*)
+              t)))))
 
 (defun %cmd-command-prompt-arg (session args)
   "command-prompt [-p prompts] [template]: open a command prompt with optional args.

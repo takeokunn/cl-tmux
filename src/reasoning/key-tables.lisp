@@ -33,16 +33,6 @@ Each entry is (:table TABLE :key KEY :command COMMAND :repeatable BOOL
   "Build a rulebase from a fresh snapshot of the live key tables."
   (build-key-rulebase (snapshot-key-bindings)))
 
-(defun %display-key (key)
-  "A short human spelling of KEY for explanations (mirrors list-keys style)."
-  (if (characterp key)
-      (let ((code (char-code key)))
-        (cond ((< 0 code 27) (format nil "C-~C" (code-char (+ code 96))))
-              ((= code 27) "Escape")
-              ((= code 32) "Space")
-              (t (string key))))
-      (princ-to-string key)))
-
 (defun explain-binding (table key &optional (rulebase (current-key-rulebase)))
   "Return a human-readable explanation of KEY in TABLE against RULEBASE.
 
@@ -51,7 +41,7 @@ and any cross-table conflicts on the same key.  Intended for diagnostics and
 REPL introspection, not for the hot dispatch path."
   (multiple-value-bind (command found) (key-command rulebase table key)
     (with-output-to-string (out)
-      (format out "~A ~A" table (%display-key key))
+      (format out "~A ~A" table (key-display-string key))
       (if found
           (format out " -> ~A" command)
           (format out " -> (unbound)"))

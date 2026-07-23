@@ -2,8 +2,6 @@
 
 ;;;; Dispatch client and session control tests.
 
-(in-suite dispatch-suite)
-
 (defparameter *attach-session-submit-cases*
   '((:registered-session "attached" "found session")
     (:missing-session "not found" "missing session")))
@@ -43,218 +41,186 @@
     ("-Z")
     ("adjustment")))
 
-;;; ── Coverage: previously untested handlers ─────────────────────────────────
+(describe "dispatch-suite"
 
-(test dispatch-attach-session-opens-prompt
-  ":attach-session opens a prompt for the session name."
-  (with-dispatch-prompt (s :attach-session :label "attach-session -t name"
-                                          :context ":attach-session must open a prompt")))
+  ;; ── Coverage: previously untested handlers ─────────────────────────────────
 
-(test dispatch-attach-session-submit-table
-  ":attach-session on-submit shows 'attached' for a registered session, 'not found' otherwise."
-  (with-fake-session (s)
-    (let ((name (session-name s)))
-      (dolist (case *attach-session-submit-cases*)
-        (destructuring-bind (session-scope expected-text desc) case
-          (let* ((registeredp (eq :registered-session session-scope))
-                 (input (if registeredp name "nosuchsession"))
-                 (registry (when registeredp (list (cons name s)))))
-            (let ((*prompt* nil) (*overlay* nil)
-                  (cl-tmux::*server-sessions* registry))
-              (cl-tmux::dispatch-command s :attach-session nil)
-              (is (prompt-active-p) "prompt must open for ~A" desc)
-              (funcall (prompt-on-submit *prompt*) input)
-              (assert-overlay-active ":attach-session ~A must show overlay" desc)
-              (assert-overlay-contains expected-text *overlay*
-                                       (format nil "~A: overlay must contain ~S"
-                                               desc expected-text)))))))))
+  ;; :attach-session opens a prompt for the session name.
+  (it "dispatch-attach-session-opens-prompt"
+    (with-dispatch-prompt (s :attach-session :label "attach-session -t name"
+                                            :context ":attach-session must open a prompt")))
 
-(test run-command-line-attach-session-target-switches-session
-  "attach-session -t <name> is scriptable and switches to the target session."
-  (with-loop-state
-    (with-empty-registry
-      (let ((s0 (make-fake-session :nwindows 1))
-            (s1 (make-fake-session :nwindows 1)))
-        (setf (cl-tmux::session-name s0) "0"
-              (cl-tmux::session-name s1) "work"
-              (cl-tmux::session-last-active s0) 10
-              (cl-tmux::session-last-active s1) 0
-              cl-tmux::*server-sessions* (list (cons "0" s0)
-                                               (cons "work" s1)))
-        (setf cl-tmux::*dirty* nil)
-        (is (eq s1 (cl-tmux::%run-command-line s0 "attach-session -t work"))
-            "attach-session -t must return the selected target session")
-        (is (eq s1 (cl-tmux::server-current-session))
-            "target session must become the current session")
-        (is-true cl-tmux::*dirty*
-                 "attach-session -t must mark the display dirty")))))
+  ;; :attach-session on-submit shows 'attached' for a registered session, 'not found' otherwise.
+  (it "dispatch-attach-session-submit-table"
+    (with-fake-session (s)
+      (let ((name (session-name s)))
+        (dolist (case *attach-session-submit-cases*)
+          (destructuring-bind (session-scope expected-text desc) case
+            (declare (ignore desc))
+            (let* ((registeredp (eq :registered-session session-scope))
+                   (input (if registeredp name "nosuchsession"))
+                   (registry (when registeredp (list (cons name s)))))
+              (let ((*prompt* nil) (*overlay* nil)
+                    (cl-tmux::*server-sessions* registry))
+                (cl-tmux::dispatch-command s :attach-session nil)
+                (expect (prompt-active-p))
+                (funcall (prompt-on-submit *prompt*) input)
+                (assert-overlay-active ":attach-session ~A must show overlay" desc)
+                (assert-overlay-contains expected-text *overlay*
+                                         (format nil "~A: overlay must contain ~S"
+                                                 desc expected-text)))))))))
 
-(test run-command-line-attach-session-accepts-working-dir
-  "attach-session -c sets the target session's working directory and switches."
-  (with-loop-state
-    (with-empty-registry
-      (let ((s0 (make-fake-session :nwindows 1))
-            (s1 (make-fake-session :nwindows 1)))
-        (setf (cl-tmux::session-name s0) "0"
-              (cl-tmux::session-name s1) "work"
-              (cl-tmux::session-last-active s0) 10
-              (cl-tmux::session-last-active s1) 0
-              cl-tmux::*server-sessions* (list (cons "0" s0)
-                                               (cons "work" s1))
+  ;; attach-session -t <name> is scriptable and switches to the target session.
+  (it "run-command-line-attach-session-target-switches-session"
+    (with-loop-state
+      (with-empty-registry
+        (let ((s0 (make-fake-session :nwindows 1))
+              (s1 (make-fake-session :nwindows 1)))
+          (setf (cl-tmux::session-name s0) "0"
+                (cl-tmux::session-name s1) "work"
+                (cl-tmux::session-last-active s0) 10
+                (cl-tmux::session-last-active s1) 0
+                cl-tmux::*server-sessions* (list (cons "0" s0)
+                                                 (cons "work" s1)))
+          (setf cl-tmux::*dirty* nil)
+          (expect (eq s1 (cl-tmux::%run-command-line s0 "attach-session -t work")))
+          (expect (eq s1 (cl-tmux::server-current-session)))
+          (expect cl-tmux::*dirty* :to-be-truthy)))))
+
+  ;; attach-session -c sets the target session's working directory and switches.
+  (it "run-command-line-attach-session-accepts-working-dir"
+    (with-loop-state
+      (with-empty-registry
+        (let ((s0 (make-fake-session :nwindows 1))
+              (s1 (make-fake-session :nwindows 1)))
+          (setf (cl-tmux::session-name s0) "0"
+                (cl-tmux::session-name s1) "work"
+                (cl-tmux::session-last-active s0) 10
+                (cl-tmux::session-last-active s1) 0
+                cl-tmux::*server-sessions* (list (cons "0" s0)
+                                                 (cons "work" s1))
+                cl-tmux::*overlay* nil)
+          (cl-tmux::%run-command-line s0 "attach-session -c /tmp -t work")
+          (expect (string= "/tmp" (cl-tmux::session-start-directory s1)))
+          (expect (eq s1 (cl-tmux::server-current-session)))))))
+
+  ;; attach-session inside a running client rejects client-creation arguments.
+  (it "run-command-line-attach-session-rejects-client-creation-args"
+    (dolist (row *attach-session-rejected-client-creation-cases*)
+      (destructuring-bind (line desc) row
+        (with-loop-state
+          (with-empty-registry
+            (let ((s0 (make-fake-session :nwindows 1))
+                  (s1 (make-fake-session :nwindows 1)))
+              (setf (cl-tmux::session-name s0) "0"
+                    (cl-tmux::session-name s1) "work"
+                    (cl-tmux::session-last-active s0) 10
+                    (cl-tmux::session-last-active s1) 0
+                    cl-tmux::*server-sessions* (list (cons "0" s0)
+                                                     (cons "work" s1))
+                    cl-tmux::*dirty* nil
+                    cl-tmux::*overlay* nil)
+              (assert-command-args-rejected-without-redraw
+                  (cl-tmux::%run-command-line s0 line)
+                  line
+                :context desc)
+              (expect (eq s0 (cl-tmux::server-current-session)))))))))
+
+  ;; :clear-prompt-history sets *prompt-history* to NIL.
+  (it "dispatch-clear-prompt-history-empties-history"
+    (with-fake-session (s)
+      (let ((cl-tmux::*prompt-history* (list "prev-cmd")))
+        (cl-tmux::dispatch-command s :clear-prompt-history nil)
+        (expect (null cl-tmux::*prompt-history*)))))
+
+  ;; :detach-all-clients sets *running* to NIL and returns :detach.
+  (it "dispatch-detach-all-clients-stops-running"
+    (with-fake-session (s)
+      (expect (eq :detach (cl-tmux::dispatch-command s :detach-all-clients nil)))
+      ;; After return the global *running* has been set to nil by the handler.
+      ;; with-loop-state restores it, so just verify the return value above.
+      ))
+
+  ;; detach without arguments detaches the active client.
+  (it "run-command-line-detach-without-args-returns-detach"
+    (with-fake-session (s)
+      (setf cl-tmux::*running* t)
+      (expect (eq :detach (cl-tmux::%run-command-line s "detach")))
+      (expect cl-tmux::*running* :to-be-truthy)))
+
+  ;; detach rejects unsupported client targeting and single-client flags.
+  (it "run-command-line-detach-rejects-unsupported-arguments"
+    (with-fake-session (s)
+      (dolist (args *detach-unsupported-argument-cases*)
+        (setf cl-tmux::*running* t
+              cl-tmux::*dirty* nil
               cl-tmux::*overlay* nil)
-        (cl-tmux::%run-command-line s0 "attach-session -c /tmp -t work")
-        (is (string= "/tmp" (cl-tmux::session-start-directory s1))
-            "attach-session -c stores the session working directory")
-        (is (eq s1 (cl-tmux::server-current-session))
-            "attach-session -c -t switches to the target session")))))
+        (assert-command-args-rejected-without-redraw
+            (cl-tmux::%cmd-detach-arg s args)
+            args
+          :context "detach")
+        (expect cl-tmux::*running* :to-be-truthy))))
 
-(test run-command-line-attach-session-rejects-client-creation-args
-  "attach-session inside a running client rejects client-creation arguments."
-  (dolist (row *attach-session-rejected-client-creation-cases*)
-    (destructuring-bind (line desc) row
-      (with-loop-state
-        (with-empty-registry
-          (let ((s0 (make-fake-session :nwindows 1))
-                (s1 (make-fake-session :nwindows 1)))
-            (setf (cl-tmux::session-name s0) "0"
-                  (cl-tmux::session-name s1) "work"
-                  (cl-tmux::session-last-active s0) 10
-                  (cl-tmux::session-last-active s1) 0
-                  cl-tmux::*server-sessions* (list (cons "0" s0)
-                                                   (cons "work" s1))
-                  cl-tmux::*dirty* nil
-                  cl-tmux::*overlay* nil)
-            (assert-command-args-rejected-without-redraw
-                (cl-tmux::%run-command-line s0 line)
-                line
-              :context desc)
-            (is (eq s0 (cl-tmux::server-current-session))
-                "~A must not switch sessions" desc)))))))
+  ;; :move-pane opens a prompt for the destination window index.
+  (it "dispatch-move-pane-opens-prompt"
+    (with-dispatch-prompt ((s :nwindows 2) :move-pane
+                           :context ":move-pane must open a prompt")))
 
-(test dispatch-clear-prompt-history-empties-history
-  ":clear-prompt-history sets *prompt-history* to NIL."
-  (with-fake-session (s)
-    (let ((cl-tmux::*prompt-history* (list "prev-cmd")))
-      (cl-tmux::dispatch-command s :clear-prompt-history nil)
-      (is (null cl-tmux::*prompt-history*)
-          ":clear-prompt-history must set *prompt-history* to NIL"))))
+  ;; :refresh-client marks *dirty* to force an immediate redraw.
+  (it "dispatch-refresh-client-marks-dirty"
+    (with-fake-session (s)
+      (let ((cl-tmux::*dirty* nil))
+        (cl-tmux::dispatch-command s :refresh-client nil)
+        (expect cl-tmux::*dirty* :to-be-truthy))))
 
-(test dispatch-detach-all-clients-stops-running
-  ":detach-all-clients sets *running* to NIL and returns :detach."
-  (with-fake-session (s)
-    (is (eq :detach (cl-tmux::dispatch-command s :detach-all-clients nil))
-        ":detach-all-clients must return :detach")
-    ;; After return the global *running* has been set to nil by the handler.
-    ;; with-loop-state restores it, so just verify the return value above.
-    ))
+  ;; refresh-client accepts only the local redraw and client-state flags.
+  (it "run-command-line-refresh-client-accepts-local-flags"
+    (with-fake-session (s)
+      (dolist (args *refresh-client-accepted-argument-cases*)
+        (setf cl-tmux::*dirty* nil
+              cl-tmux::*overlay* nil)
+        (expect (cl-tmux::%cmd-refresh-client-arg s args) :to-be-truthy)
+        (expect cl-tmux::*dirty* :to-be-truthy)
+        (expect (null cl-tmux::*overlay*)))))
 
-(test run-command-line-detach-without-args-returns-detach
-  "detach without arguments detaches the active client."
-  (with-fake-session (s)
-    (setf cl-tmux::*running* t)
-    (is (eq :detach (cl-tmux::%run-command-line s "detach"))
-        "detach without arguments must return :detach")
-    (is-true cl-tmux::*running*
-             "detach returns a detach disposition; the caller owns loop shutdown")))
+  ;; refresh-client rejects unsupported forms and unknown flags.
+  (it "run-command-line-refresh-client-rejects-unsupported-arguments"
+    (with-fake-session (s)
+      (dolist (args *refresh-client-rejected-argument-cases*)
+        (setf cl-tmux::*dirty* nil
+              cl-tmux::*overlay* nil)
+        (assert-command-args-rejected-without-redraw
+            (cl-tmux::%cmd-refresh-client-arg s args)
+            args
+          :context "refresh-client"))))
 
-(test run-command-line-detach-rejects-unsupported-arguments
-  "detach rejects unsupported client targeting and single-client flags."
-  (with-fake-session (s)
-    (dolist (args *detach-unsupported-argument-cases*)
-      (setf cl-tmux::*running* t
-            cl-tmux::*dirty* nil
-            cl-tmux::*overlay* nil)
-      (assert-command-args-rejected-without-redraw
-          (cl-tmux::%cmd-detach-arg s args)
-          args
-        :context "detach")
-      (is-true cl-tmux::*running*
-               "a rejected detach must not stop the event loop: ~S" args))))
+  ;; lock-client rejects unsupported target-client arguments.
+  (it "run-command-line-lock-client-rejects-target-client"
+    (with-fake-session (s)
+      (let ((cl-tmux::*dirty* nil)
+            (cl-tmux::*overlay* nil))
+        (setf (cl-tmux::session-locked-p s) nil)
+        (assert-command-args-rejected-without-redraw
+            (cl-tmux::%run-command-line s "lock-client -t client-0")
+            "lock-client -t client-0"
+          :context "lock-client -t")
+        (expect (cl-tmux::session-locked-p s) :to-be-falsy))))
 
-(test dispatch-move-pane-opens-prompt
-  ":move-pane opens a prompt for the destination window index."
-  (with-dispatch-prompt ((s :nwindows 2) :move-pane
-                         :context ":move-pane must open a prompt")))
+  ;; lock-client and lock-session both lock the active session when no -t is given.
+  ;; Each row: (command description).
+  (it "run-command-line-lock-commands-lock-current-session-table"
+    (dolist (row '(("lock-client"  "lock-client must lock the active session")
+                   ("lock-session" "lock-session must lock the current session")))
+      (destructuring-bind (cmd desc) row
+        (declare (ignore desc))
+        (with-fake-session (s)
+          (let ((cl-tmux::*overlay* nil))
+            (setf (cl-tmux::session-locked-p s) nil)
+            (cl-tmux::%run-command-line s cmd)
+            (expect (cl-tmux::session-locked-p s) :to-be-truthy))))))
 
-(test dispatch-refresh-client-marks-dirty
-  ":refresh-client marks *dirty* to force an immediate redraw."
-  (with-fake-session (s)
-    (let ((cl-tmux::*dirty* nil))
-      (cl-tmux::dispatch-command s :refresh-client nil)
-      (is-true cl-tmux::*dirty* ":refresh-client must set *dirty*"))))
-
-(test run-command-line-refresh-client-accepts-local-flags
-  "refresh-client accepts only the local redraw and client-state flags."
-  (with-fake-session (s)
-    (dolist (args *refresh-client-accepted-argument-cases*)
-      (setf cl-tmux::*dirty* nil
-            cl-tmux::*overlay* nil)
-      (is-true (cl-tmux::%cmd-refresh-client-arg s args)
-               "refresh-client must accept ~S" args)
-      (is-true cl-tmux::*dirty*
-               "accepted refresh-client args must redraw: ~S" args)
-      (is (null cl-tmux::*overlay*)
-          "accepted refresh-client args must not raise an overlay: ~S" args))))
-
-(test run-command-line-refresh-client-rejects-unsupported-arguments
-  "refresh-client rejects unsupported forms and unknown flags."
-  (with-fake-session (s)
-    (dolist (args *refresh-client-rejected-argument-cases*)
-      (setf cl-tmux::*dirty* nil
-            cl-tmux::*overlay* nil)
-      (assert-command-args-rejected-without-redraw
-          (cl-tmux::%cmd-refresh-client-arg s args)
-          args
-        :context "refresh-client"))))
-
-
-(test run-command-line-lock-client-rejects-target-client
-  "lock-client rejects unsupported target-client arguments."
-  (with-fake-session (s)
-    (let ((cl-tmux::*dirty* nil)
-          (cl-tmux::*overlay* nil))
-      (setf (cl-tmux::session-locked-p s) nil)
-      (assert-command-args-rejected-without-redraw
-          (cl-tmux::%run-command-line s "lock-client -t client-0")
-          "lock-client -t client-0"
-        :context "lock-client -t")
-      (is-false (cl-tmux::session-locked-p s)
-                "lock-client -t must not lock the active session"))))
-
-(test run-command-line-lock-commands-lock-current-session-table
-  "lock-client and lock-session both lock the active session when no -t is given.
-   Each row: (command description)."
-  (dolist (row '(("lock-client"  "lock-client must lock the active session")
-                 ("lock-session" "lock-session must lock the current session")))
-    (destructuring-bind (cmd desc) row
-      (with-fake-session (s)
-        (let ((cl-tmux::*overlay* nil))
-          (setf (cl-tmux::session-locked-p s) nil)
-          (cl-tmux::%run-command-line s cmd)
-          (is-true (cl-tmux::session-locked-p s) desc))))))
-
-(test run-command-line-lock-session-target-locks-target-session
-  "lock-session -t locks the named target session."
-  (with-empty-registry
-    (let ((s0 (make-fake-session :nwindows 1))
-          (s1 (make-fake-session :nwindows 1)))
-      (setf (cl-tmux::session-name s0) "0"
-            (cl-tmux::session-name s1) "work"
-            cl-tmux::*server-sessions* (list (cons "0" s0)
-                                             (cons "work" s1)))
-      (let ((cl-tmux::*overlay* nil))
-        (setf (cl-tmux::session-locked-p s0) nil
-              (cl-tmux::session-locked-p s1) nil)
-        (is-true (cl-tmux::%run-command-line s0 "lock-session -t work")
-                 "lock-session -t must be handled by the command runner")
-        (is-false (cl-tmux::session-locked-p s0)
-                  "lock-session -t must not lock the source session")
-        (is-true (cl-tmux::session-locked-p s1)
-                 "lock-session -t must lock the target session")))))
-
-(test run-command-line-lock-session-rejects-unsupported-arguments
-  "lock-session rejects unknown flags and positional tokens before locking anything."
-  (dolist (command *lock-session-rejected-argument-cases*)
+  ;; lock-session -t locks the named target session.
+  (it "run-command-line-lock-session-target-locks-target-session"
     (with-empty-registry
       (let ((s0 (make-fake-session :nwindows 1))
             (s1 (make-fake-session :nwindows 1)))
@@ -262,15 +228,30 @@
               (cl-tmux::session-name s1) "work"
               cl-tmux::*server-sessions* (list (cons "0" s0)
                                                (cons "work" s1)))
-        (let ((cl-tmux::*dirty* nil)
-              (cl-tmux::*overlay* nil))
+        (let ((cl-tmux::*overlay* nil))
           (setf (cl-tmux::session-locked-p s0) nil
                 (cl-tmux::session-locked-p s1) nil)
-          (assert-command-args-rejected-without-redraw
-              (cl-tmux::%run-command-line s0 command)
-              command
-            :context "lock-session")
-          (is-false (cl-tmux::session-locked-p s0)
-                     "~A must not lock the source session" command)
-          (is-false (cl-tmux::session-locked-p s1)
-                     "~A must not lock the target session" command))))))
+          (expect (cl-tmux::%run-command-line s0 "lock-session -t work") :to-be-truthy)
+          (expect (cl-tmux::session-locked-p s0) :to-be-falsy)
+          (expect (cl-tmux::session-locked-p s1) :to-be-truthy)))))
+
+  ;; lock-session rejects unknown flags and positional tokens before locking anything.
+  (it "run-command-line-lock-session-rejects-unsupported-arguments"
+    (dolist (command *lock-session-rejected-argument-cases*)
+      (with-empty-registry
+        (let ((s0 (make-fake-session :nwindows 1))
+              (s1 (make-fake-session :nwindows 1)))
+          (setf (cl-tmux::session-name s0) "0"
+                (cl-tmux::session-name s1) "work"
+                cl-tmux::*server-sessions* (list (cons "0" s0)
+                                                 (cons "work" s1)))
+          (let ((cl-tmux::*dirty* nil)
+                (cl-tmux::*overlay* nil))
+            (setf (cl-tmux::session-locked-p s0) nil
+                  (cl-tmux::session-locked-p s1) nil)
+            (assert-command-args-rejected-without-redraw
+                (cl-tmux::%run-command-line s0 command)
+                command
+              :context "lock-session")
+            (expect (cl-tmux::session-locked-p s0) :to-be-falsy)
+            (expect (cl-tmux::session-locked-p s1) :to-be-falsy)))))))

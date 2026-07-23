@@ -210,12 +210,13 @@
        (:file "renderer-style")     ; style-string parsing + SGR emission logic
        (:file "renderer-pane-selection") ; selection bounds helpers
        (:file "renderer-pane-clock")     ; big digits + display-panes clock overlay
+       (:file "renderer-statusbar-layout"); status bar layout helpers (needed by renderer-pane-copy-mode-overlay below)
        (:file "renderer-pane-search")    ; pane content search match ranges
-       (:file "renderer-pane-copy-mode") ; copy-mode pane overlay rendering
+       (:file "renderer-pane-copy-mode-overlay")      ; copy-mode position-banner overlay rendering
+       (:file "renderer-pane-copy-mode-line-number")  ; copy-mode line-number gutter rendering
        (:file "renderer-pane")           ; pane cell rendering (selection, copy-mode highlights)
        (:file "renderer-borders")        ; split-tree separators + pane border rendering
        (:file "renderer-overlay")        ; popup and menu box-drawing
-       (:file "renderer-statusbar-layout"); status bar layout helpers
        (:file "renderer-statusbar")      ; status bar composition
        (:file "renderer-compose-protocols") ; terminal protocol toggles
        (:file "renderer-compose-overlay")   ; overlay rendering + mouse mode sequences

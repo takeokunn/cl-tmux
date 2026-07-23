@@ -3,391 +3,360 @@
 ;;;; Arg-command dispatch tests — part 3: helper tests, on-submit paths,
 ;;;; cyclic navigation, break/join/source/run/if dispatch.
 
-(in-suite dispatch-suite)
+(describe "dispatch-suite"
 
-;;; ── %toggle-synchronize-panes helper ─────────────────────────────────────────
+  ;;; ── %toggle-synchronize-panes helper ─────────────────────────────────────────
 
-(test toggle-synchronize-panes-table
-  "%toggle-synchronize-panes shows ON overlay from off, OFF overlay from on."
-  (dolist (row '((nil "ON"  "toggling from off must show ON")
-                 (t   "OFF" "toggling from on must show OFF")))
-    (destructuring-bind (initial expected-text desc) row
-      (with-loop-state
-        (let ((*overlay* nil))
-          (cl-tmux/options:set-option "synchronize-panes" initial)
-          (cl-tmux::%toggle-synchronize-panes)
-          (assert-overlay-active "~A: overlay must be shown" desc)
-          (assert-overlay-contains expected-text *overlay* desc))))))
+  ;; %toggle-synchronize-panes shows ON overlay from off, OFF overlay from on.
+  (it "toggle-synchronize-panes-table"
+    (dolist (row '((nil "ON"  "toggling from off must show ON")
+                   (t   "OFF" "toggling from on must show OFF")))
+      (destructuring-bind (initial expected-text desc) row
+        (declare (ignore desc))
+        (with-loop-state
+          (let ((*overlay* nil))
+            (cl-tmux/options:set-option "synchronize-panes" initial)
+            (cl-tmux::%toggle-synchronize-panes)
+            (assert-overlay-active "overlay must be shown")
+            (assert-overlay-contains expected-text *overlay*))))))
 
-;;; ── next-cyclic / prev-cyclic edge cases ────────────────────────────────────
+  ;;; ── next-cyclic / prev-cyclic edge cases ────────────────────────────────────
 
-(test cyclic-navigation-table
-  "next-cyclic advances and prev-cyclic retreats; both wrap correctly on single-element lists."
-  (dolist (c '((cl-tmux::next-cyclic (x)       x       x  "next of only element → itself")
-               (cl-tmux::next-cyclic (x)       missing x  "next with unknown current → element")
-               (cl-tmux::prev-cyclic (x)       x       x  "prev of only element → itself")
-               (cl-tmux::next-cyclic (a b c d) b       c  "next from middle → following")
-               (cl-tmux::prev-cyclic (a b c d) b       a  "prev from middle → preceding")))
-    (destructuring-bind (fn lst current expected desc) c
-      (is (eql expected (funcall fn lst current))
-          "~A" desc))))
+  ;; next-cyclic advances and prev-cyclic retreats; both wrap correctly on single-element lists.
+  (it "cyclic-navigation-table"
+    (dolist (c '((cl-tmux::next-cyclic (x)       x       x  "next of only element → itself")
+                 (cl-tmux::next-cyclic (x)       missing x  "next with unknown current → element")
+                 (cl-tmux::prev-cyclic (x)       x       x  "prev of only element → itself")
+                 (cl-tmux::next-cyclic (a b c d) b       c  "next from middle → following")
+                 (cl-tmux::prev-cyclic (a b c d) b       a  "prev from middle → preceding")))
+      (destructuring-bind (fn lst current expected desc) c
+        (declare (ignore desc))
+        (expect (eql expected (funcall fn lst current))))))
 
-;;; ── with-active-window macro ────────────────────────────────────────────────
+  ;;; ── with-active-window macro ────────────────────────────────────────────────
 
-(test with-active-window-evaluates-body-when-window-exists
-  "with-active-window evaluates BODY and binds WIN-VAR when a window is active."
-  (let* ((s   (make-fake-session :nwindows 1))
-         (win (session-active-window s))
-         (result nil))
-    (cl-tmux::with-active-window (w s)
-      (setf result w))
-    (is (eq win result)
-        "with-active-window must bind WIN-VAR to the active window")))
-
-(test with-active-window-returns-nil-for-windowless-session
-  "with-active-window returns NIL and skips BODY when no active window exists."
-  (with-empty-session (s)
-    (let ((called nil))
+  ;; with-active-window evaluates BODY and binds WIN-VAR when a window is active.
+  (it "with-active-window-evaluates-body-when-window-exists"
+    (let* ((s   (make-fake-session :nwindows 1))
+           (win (session-active-window s))
+           (result nil))
       (cl-tmux::with-active-window (w s)
-        (setf called t))
-      (is-false called
-                "with-active-window body must not execute when no active window"))))
+        (setf result w))
+      (expect (eq win result))))
 
-(test with-active-window-macro-is-defined
-  "with-active-window is a defined macro."
-  (is (macro-function 'cl-tmux::with-active-window)
-      "with-active-window must be a macro"))
+  ;; with-active-window returns NIL and skips BODY when no active window exists.
+  (it "with-active-window-returns-nil-for-windowless-session"
+    (with-empty-session (s)
+      (let ((called nil))
+        (cl-tmux::with-active-window (w s)
+          (setf called t))
+        (expect called :to-be-falsy))))
 
-;;; ── %copy-mode-cmd helper ────────────────────────────────────────────────────
+  ;; with-active-window is a defined macro.
+  (it "with-active-window-macro-is-defined"
+    (expect (macro-function 'cl-tmux::with-active-window)))
 
-(test copy-mode-cmd-returns-override-for-known-char
-  "%copy-mode-cmd returns the override keyword for characters in the override table."
-  (is (eq :copy-mode-exit (cl-tmux::%copy-mode-cmd #\q))
-      "%copy-mode-cmd must return :copy-mode-exit for #\\q")
-  (is (eq :copy-mode-exit (cl-tmux::%copy-mode-cmd #\i))
-      "%copy-mode-cmd must return :copy-mode-exit for #\\i")
-  (is (eq :copy-mode-yank (cl-tmux::%copy-mode-cmd #\y))
-      "%copy-mode-cmd must return :copy-mode-yank for #\\y")
-  (is (eq :copy-mode-begin-selection (cl-tmux::%copy-mode-cmd #\Space))
-      "%copy-mode-cmd must return :copy-mode-begin-selection for #\\Space"))
+  ;;; ── %copy-mode-cmd helper ────────────────────────────────────────────────────
 
-(test copy-mode-cmd-returns-nil-for-nil-char
-  "%copy-mode-cmd returns NIL when CH is NIL."
-  (is (null (cl-tmux::%copy-mode-cmd nil))
-      "%copy-mode-cmd must return NIL for NIL input"))
+  ;; %copy-mode-cmd returns the override keyword for characters in the override table.
+  (it "copy-mode-cmd-returns-override-for-known-char"
+    (expect (eq :copy-mode-exit (cl-tmux::%copy-mode-cmd #\q)))
+    (expect (eq :copy-mode-exit (cl-tmux::%copy-mode-cmd #\i)))
+    (expect (eq :copy-mode-yank (cl-tmux::%copy-mode-cmd #\y)))
+    (expect (eq :copy-mode-begin-selection (cl-tmux::%copy-mode-cmd #\Space))))
 
-(test copy-mode-cmd-falls-through-to-key-binding-for-unknown-char
-  "%copy-mode-cmd falls back to the normal key-binding lookup for unmapped chars."
-  ;; #\d is the 'detach' binding in the prefix table (not a copy-mode override).
-  ;; We don't assert the exact result because it depends on the key-binding table,
-  ;; but we verify the call does not error.
-  (finishes (cl-tmux::%copy-mode-cmd #\d)
-            "%copy-mode-cmd must not error for a char not in the override table"))
+  ;; %copy-mode-cmd returns NIL when CH is NIL.
+  (it "copy-mode-cmd-returns-nil-for-nil-char"
+    (expect (null (cl-tmux::%copy-mode-cmd nil))))
 
-;;; ── %format-menu helper ──────────────────────────────────────────────────────
+  ;; %copy-mode-cmd falls back to the normal key-binding lookup for unmapped chars.
+  (it "copy-mode-cmd-falls-through-to-key-binding-for-unknown-char"
+    ;; #\d is the 'detach' binding in the prefix table (not a copy-mode override).
+    ;; We don't assert the exact result because it depends on the key-binding table,
+    ;; but we verify the call does not error.
+    (finishes (cl-tmux::%copy-mode-cmd #\d)
+              "%copy-mode-cmd must not error for a char not in the override table"))
 
-(test format-menu-produces-box-with-title-and-items
-  "%format-menu returns a string with box-drawing characters, the title, and items."
-  (let* ((menu   (make-menu :title "TestMenu"
-                             :items (list (cons "Alpha" :ka) (cons "Beta" :kb))
-                             :selected-index 0))
-         (output (cl-tmux::%format-menu menu)))
-    (is (stringp output) "%format-menu must return a string")
-    (is (search "TestMenu" output) "output must contain the menu title")
-    (is (search "Alpha" output) "output must contain the first item label")
-    (is (search "Beta"  output) "output must contain the second item label")
-    (is (search "┌" output) "output must have a top-left corner character")
-    (is (search "└" output) "output must have a bottom-left corner character")))
+  ;;; ── %format-menu helper ──────────────────────────────────────────────────────
 
-(test format-menu-marks-selected-item-with-arrow
-  "%format-menu marks the selected item with the ▶ character."
-  (let* ((menu   (make-menu :title "M"
-                             :items (list (cons "A" :ka) (cons "B" :kb))
-                             :selected-index 1))
-         (output (cl-tmux::%format-menu menu)))
-    (is (search "▶" output) "output must contain the ▶ selection marker")
-    ;; The selected item B should be on the marked line.
-    (let ((arrow-pos (search "▶" output))
-          (b-pos     (search "B" output)))
-      (is (and arrow-pos b-pos (< arrow-pos (+ b-pos 10)))
-          "▶ marker must appear near the selected item 'B'"))))
+  ;; %format-menu returns a string with box-drawing characters, the title, and items.
+  (it "format-menu-produces-box-with-title-and-items"
+    (let* ((menu   (make-menu :title "TestMenu"
+                               :items (list (cons "Alpha" :ka) (cons "Beta" :kb))
+                               :selected-index 0))
+           (output (cl-tmux::%format-menu menu)))
+      (expect (stringp output))
+      (expect (search "TestMenu" output))
+      (expect (search "Alpha" output))
+      (expect (search "Beta"  output))
+      (expect (search "┌" output))
+      (expect (search "└" output))))
 
-(test format-menu-empty-items-produces-minimal-box
-  "%format-menu with an empty item list still produces a valid box string."
-  (let* ((menu   (make-menu :title "Empty" :items nil :selected-index 0))
-         (output (cl-tmux::%format-menu menu)))
-    (is (stringp output) "%format-menu with no items must return a string")
-    (is (search "Empty" output) "output must still contain the title")))
+  ;; %format-menu marks the selected item with the ▶ character.
+  (it "format-menu-marks-selected-item-with-arrow"
+    (let* ((menu   (make-menu :title "M"
+                               :items (list (cons "A" :ka) (cons "B" :kb))
+                               :selected-index 1))
+           (output (cl-tmux::%format-menu menu)))
+      (expect (search "▶" output))
+      ;; The selected item B should be on the marked line.
+      (let ((arrow-pos (search "▶" output))
+            (b-pos     (search "B" output)))
+        (expect (and arrow-pos b-pos (< arrow-pos (+ b-pos 10)))))))
 
-;;; ── %swap-active-pane helper ─────────────────────────────────────────────────
+  ;; %format-menu with an empty item list still produces a valid box string.
+  (it "format-menu-empty-items-produces-minimal-box"
+    (let* ((menu   (make-menu :title "Empty" :items nil :selected-index 0))
+           (output (cl-tmux::%format-menu menu)))
+      (expect (stringp output))
+      (expect (search "Empty" output))))
 
-(test swap-active-pane-table
-  "%swap-active-pane :right (from p0) and :left (from p1) both move p1 to first."
-  (dolist (row '((:right nil  "forward: p0 active, swap right → p1 first")
-                 (:left  t    "backward: p1 active, swap left → p1 first")))
-    (destructuring-bind (dir select-p1 desc) row
-      (with-two-pane-h-session (sess win p0 p1)
-        (when select-p1 (window-select-pane win p1))
-        (cl-tmux::%swap-active-pane sess dir)
-        (is (eq p1 (first  (window-panes win))) "~A: p1 must be first"  desc)
-        (is (eq p0 (second (window-panes win))) "~A: p0 must be second" desc)))))
+  ;;; ── %swap-active-pane helper ─────────────────────────────────────────────────
 
-;;; ── %cmd-split helper ────────────────────────────────────────────────────────
+  ;; %swap-active-pane :right (from p0) and :left (from p1) both move p1 to first.
+  (it "swap-active-pane-table"
+    (dolist (row '((:right nil  "forward: p0 active, swap right → p1 first")
+                   (:left  t    "backward: p1 active, swap left → p1 first")))
+      (destructuring-bind (dir select-p1 desc) row
+        (declare (ignore desc))
+        (with-two-pane-h-session (sess win p0 p1)
+          (when select-p1 (window-select-pane win p1))
+          (cl-tmux::%swap-active-pane sess dir)
+          (expect (eq p1 (first  (window-panes win))))
+          (expect (eq p0 (second (window-panes win))))))))
 
-(test cmd-split-no-focus-table
-  "%cmd-split with :no-focus T does not signal an error in either orientation."
-  (dolist (c '((:h "horizontal :no-focus must not error even when pane is too small")
-               (:v "vertical :no-focus must not error even when pane is too small")))
-    (destructuring-bind (orient desc) c
-      (with-fake-session (s :nwindows 1 :npanes 1)
-        (finishes (cl-tmux::%cmd-split s orient :no-focus t) "~A" desc)))))
+  ;;; ── %cmd-split helper ────────────────────────────────────────────────────────
 
-;;; ── %make-dispatch-named-table helper ────────────────────────────────────────
+  ;; %cmd-split with :no-focus T does not signal an error in either orientation.
+  (it "cmd-split-no-focus-table"
+    (dolist (c '((:h "horizontal :no-focus must not error even when pane is too small")
+                 (:v "vertical :no-focus must not error even when pane is too small")))
+      (destructuring-bind (orient desc) c
+        (with-fake-session (s :nwindows 1 :npanes 1)
+          (finishes (cl-tmux::%cmd-split s orient :no-focus t) "~A" desc)))))
 
-(test make-dispatch-named-table-builds-lookup-table
-  "%make-dispatch-named-table returns a hash table mapping canonical command names to keywords."
-  (let* ((specs (list (list :named-keyword :detach :named-names (list "detach"))
-                      (list :named-keyword :new-window :named-names (list "new-window"))))
-         (table (cl-tmux::%make-dispatch-named-table specs)))
-    (is (hash-table-p table)
-        "%make-dispatch-named-table must return a hash table")
-    (is (eq :detach (gethash "detach" table))
-        "canonical name 'detach' must map to :detach")
-    (is (null (gethash "d" table))
-        "shorthand 'd' must not map to :detach")
-    (is (eq :new-window (gethash "new-window" table))
-        "canonical name 'new-window' must map to :new-window")
-    (is (null (gethash "neww" table))
-        "shorthand 'neww' must not map to :new-window")))
+  ;;; ── %make-dispatch-named-table helper ────────────────────────────────────────
 
-(test make-dispatch-named-table-skips-specs-without-keyword
-  "%make-dispatch-named-table ignores specs that lack a :named-keyword."
-  (let* ((specs (list (list :named-names (list "orphan"))))
-         (table (cl-tmux::%make-dispatch-named-table specs)))
-    (is (hash-table-p table)
-        "%make-dispatch-named-table must return a hash table even for empty specs")
-    (is (null (gethash "orphan" table))
-        "a spec with no :named-keyword must not add any entry")))
+  ;; %make-dispatch-named-table returns a hash table mapping canonical command names to keywords.
+  (it "make-dispatch-named-table-builds-lookup-table"
+    (let* ((specs (list (list :named-keyword :detach :named-names (list "detach"))
+                        (list :named-keyword :new-window :named-names (list "new-window"))))
+           (table (cl-tmux::%make-dispatch-named-table specs)))
+      (expect (hash-table-p table))
+      (expect (eq :detach (gethash "detach" table)))
+      (expect (null (gethash "d" table)))
+      (expect (eq :new-window (gethash "new-window" table)))
+      (expect (null (gethash "neww" table)))))
 
-(test dispatch-named-command-detach
-  "%dispatch-named-command \"detach\" returns :detach."
-  (with-fake-session (s)
-    (is (eq :detach (cl-tmux::%dispatch-named-command s "detach"))
-        "%dispatch-named-command \"detach\" must return :detach")
-    (is (eq :unknown-command (cl-tmux::%dispatch-named-command s "detach-client"))
-        "%dispatch-named-command \"detach-client\" must be rejected")))
+  ;; %make-dispatch-named-table ignores specs that lack a :named-keyword.
+  (it "make-dispatch-named-table-skips-specs-without-keyword"
+    (let* ((specs (list (list :named-names (list "orphan"))))
+           (table (cl-tmux::%make-dispatch-named-table specs)))
+      (expect (hash-table-p table))
+      (expect (null (gethash "orphan" table)))))
 
-(test dispatch-named-command-list-sessions
-  "%dispatch-named-command \"list-sessions\" opens an overlay."
-  (with-fake-session (s :nwindows 1)
-    (let ((*overlay* nil)
-          (cl-tmux::*server-sessions* nil))
-      (cl-tmux::%dispatch-named-command s "list-sessions")
-      (assert-overlay-active
-       "%dispatch-named-command 'list-sessions' must open an overlay"))))
+  ;; %dispatch-named-command "detach" returns :detach.
+  (it "dispatch-named-command-detach"
+    (with-fake-session (s)
+      (expect (eq :detach (cl-tmux::%dispatch-named-command s "detach")))
+      (expect (eq :unknown-command (cl-tmux::%dispatch-named-command s "detach-client")))))
 
-(test dispatch-named-command-copy-mode-enter
-  "%dispatch-named-command \"copy-mode-enter\" enters copy mode."
-  (with-fake-session (s)
-    (cl-tmux::%dispatch-named-command s "copy-mode-enter")
-    (is (cl-tmux::%copy-mode-active-p s)
-        "%dispatch-named-command 'copy-mode-enter' must enter copy mode")
-    (is (eq :unknown-command (cl-tmux::%dispatch-named-command s "copy-mode"))
-        "%dispatch-named-command 'copy-mode' must be rejected")))
+  ;; %dispatch-named-command "list-sessions" opens an overlay.
+  (it "dispatch-named-command-list-sessions"
+    (with-fake-session (s :nwindows 1)
+      (let ((*overlay* nil)
+            (cl-tmux::*server-sessions* nil))
+        (cl-tmux::%dispatch-named-command s "list-sessions")
+        (assert-overlay-active
+         "%dispatch-named-command 'list-sessions' must open an overlay"))))
 
-(test dispatch-named-command-display-menu
-  "%dispatch-named-command \"display-menu\" opens a menu overlay."
-  (with-fake-session (s)
-    (let ((*overlay* nil)
-          (cl-tmux::*active-menu* nil))
-      (is (null (cl-tmux::%dispatch-named-command s "display-menu"))
-          "%dispatch-named-command \"display-menu\" must not return a dispatch keyword")
-      (is (not (null cl-tmux::*active-menu*))
-          "%dispatch-named-command \"display-menu\" must set *active-menu*")
-      (assert-overlay-active
-       "%dispatch-named-command 'display-menu' must open an overlay")
-      (is (eq :unknown-command (cl-tmux::%dispatch-named-command s "menu"))
-          "%dispatch-named-command \"menu\" must be rejected"))))
+  ;; %dispatch-named-command "copy-mode-enter" enters copy mode.
+  (it "dispatch-named-command-copy-mode-enter"
+    (with-fake-session (s)
+      (cl-tmux::%dispatch-named-command s "copy-mode-enter")
+      (expect (cl-tmux::%copy-mode-active-p s))
+      (expect (eq :unknown-command (cl-tmux::%dispatch-named-command s "copy-mode")))))
 
-;;; ── dispatch-prefix-command in copy mode ────────────────────────────────────
+  ;; %dispatch-named-command "display-menu" opens a menu overlay.
+  (it "dispatch-named-command-display-menu"
+    (with-fake-session (s)
+      (let ((*overlay* nil)
+            (cl-tmux::*active-menu* nil))
+        (expect (null (cl-tmux::%dispatch-named-command s "display-menu")))
+        (expect (not (null cl-tmux::*active-menu*)))
+        (assert-overlay-active
+         "%dispatch-named-command 'display-menu' must open an overlay")
+        (expect (eq :unknown-command (cl-tmux::%dispatch-named-command s "menu"))))))
 
-(test dispatch-prefix-command-copy-mode-y-yanks
-  "In copy mode, dispatch-prefix-command with 'y' issues :copy-mode-yank."
-  ;; We verify indirectly: yank in copy mode should exit selection/copy mode.
-  ;; Since we have no real selection, we just verify it doesn't error.
-  (with-fake-session (s)
-    (cl-tmux::dispatch-command s :copy-mode-enter nil)
-    (is (cl-tmux::%copy-mode-active-p s) "copy mode must be on")
-    (finishes (cl-tmux::dispatch-prefix-command s (char-code #\y))
-              "dispatch-prefix-command 'y' in copy mode must not error")))
+  ;;; ── dispatch-prefix-command in copy mode ────────────────────────────────────
 
-(test dispatch-prefix-command-copy-mode-search-prompts
-  "In copy mode, '/' opens forward-search and '?' opens backward-search prompt."
-  (dolist (ch '(#\/ #\?))
+  ;; In copy mode, dispatch-prefix-command with 'y' issues :copy-mode-yank.
+  (it "dispatch-prefix-command-copy-mode-y-yanks"
+    ;; We verify indirectly: yank in copy mode should exit selection/copy mode.
+    ;; Since we have no real selection, we just verify it doesn't error.
     (with-fake-session (s)
       (cl-tmux::dispatch-command s :copy-mode-enter nil)
-      (let ((*prompt* nil))
-        (cl-tmux::dispatch-prefix-command s (char-code ch))
-        (is (prompt-active-p)
-            "dispatch-prefix-command ~S in copy mode must open a search prompt" ch)
-        (is (string= (string ch) (prompt-label *prompt*))
-            "search prompt label must equal the char (~S)" ch)))))
+      (expect (cl-tmux::%copy-mode-active-p s))
+      (finishes (cl-tmux::dispatch-prefix-command s (char-code #\y))
+                "dispatch-prefix-command 'y' in copy mode must not error")))
 
-;;; ── :select-layout-even-h / :select-layout-even-v dispatch ──────────────────
-
-(test dispatch-select-layout-even-does-not-error
-  ":select-layout-even-h and :select-layout-even-v both dispatch without error."
-  (with-two-pane-h-session (sess win p0 p1)
-    (is (and win p0 p1) "h fixture created")
-    (finishes (cl-tmux::dispatch-command sess :select-layout-even-h nil)
-              ":select-layout-even-h must not signal an error"))
-  (with-two-pane-v-session (sess win p0 p1)
-    (is (and win p0 p1) "v fixture created")
-    (finishes (cl-tmux::dispatch-command sess :select-layout-even-v nil)
-              ":select-layout-even-v must not signal an error")))
-
-;;; ── :break-pane dispatch ─────────────────────────────────────────────────────
-
-(test dispatch-break-pane-on-single-pane-window-is-noop
-  ":break-pane on a single-pane window is a no-op (guard prevents break)."
-  (with-fake-session (s :nwindows 1 :npanes 1)
-    (let ((nwindows-before (length (session-windows s))))
-      (finishes (cl-tmux::dispatch-command s :break-pane nil)
-                ":break-pane on a single-pane window must not error")
-      ;; With only one pane, the guard should prevent creation of a new window.
-      (is (= nwindows-before (length (session-windows s)))
-          ":break-pane on a single-pane window must not add a new window"))))
-
-(test dispatch-break-pane-on-two-pane-window-creates-new-window
-  ":break-pane on a two-pane window extracts the active pane into a new window."
-  (with-two-pane-h-session (sess win p0 p1)
-    (is (and win p0 p1) "two-pane fixture created")
-    (let ((nwindows-before (length (session-windows sess))))
-      ;; break-pane may fail in sandbox (PTY fork), so tolerate errors.
-      (handler-case
-          (progn
-            (cl-tmux::dispatch-command sess :break-pane nil)
-            ;; If it succeeded, a new window should have been created.
-            (is (> (length (session-windows sess)) nwindows-before)
-                ":break-pane must create a new window when there are 2+ panes"))
-        (error ()
-          ;; Fork failure in sandbox is acceptable; dispatch layer must not error.
-          (is-true t ":break-pane signalled at PTY level (acceptable in sandbox)"))))))
-
-;;; ── :join-pane dispatch ──────────────────────────────────────────────────────
-
-(test dispatch-join-pane-opens-prompt
-  ":join-pane opens a prompt for the source window index."
-  (with-fake-session (s :nwindows 2)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :join-pane nil)
-      (is (prompt-active-p) ":join-pane must open a prompt"))))
-
-;;; ── :source-file dispatch ────────────────────────────────────────────────────
-
-(test dispatch-prompt-opening-commands-table
-  ":source-file, :run-shell, and :if-shell each open a prompt with the matching label."
-  (dolist (c '((:source-file "source-file")
-               (:run-shell   "run-shell")
-               (:if-shell    "if-shell")))
-    (destructuring-bind (cmd label) c
+  ;; In copy mode, '/' opens forward-search and '?' opens backward-search prompt.
+  (it "dispatch-prefix-command-copy-mode-search-prompts"
+    (dolist (ch '(#\/ #\?))
       (with-fake-session (s)
+        (cl-tmux::dispatch-command s :copy-mode-enter nil)
         (let ((*prompt* nil))
-          (cl-tmux::dispatch-command s cmd nil)
-          (is (prompt-active-p) "~S must open a prompt" cmd)
-          (is (string= label (prompt-label *prompt*))
-              "~S prompt label must be ~S" cmd label))))))
+          (cl-tmux::dispatch-prefix-command s (char-code ch))
+          (expect (prompt-active-p))
+          (expect (string= (string ch) (prompt-label *prompt*)))))))
 
-(test dispatch-empty-input-is-noop-table
-  ":source-file, :run-shell, and :if-shell with empty input do not crash."
-  (dolist (cmd '(:source-file :run-shell :if-shell))
-    (with-fake-session (s)
-      (let ((*prompt* nil) (*overlay* nil))
-        (cl-tmux::dispatch-command s cmd nil)
-        (is (prompt-active-p) "~S must open a prompt" cmd)
-        (finishes (funcall (prompt-on-submit *prompt*) "")
-                  "~S with empty input must not error" cmd)))))
+  ;;; ── :select-layout-even-h / :select-layout-even-v dispatch ──────────────────
 
-;;; ── :choose-window dispatch ──────────────────────────────────────────────────
+  ;; :select-layout-even-h and :select-layout-even-v both dispatch without error.
+  (it "dispatch-select-layout-even-does-not-error"
+    (with-two-pane-h-session (sess win p0 p1)
+      (expect (and win p0 p1))
+      (finishes (cl-tmux::dispatch-command sess :select-layout-even-h nil)
+                ":select-layout-even-h must not signal an error"))
+    (with-two-pane-v-session (sess win p0 p1)
+      (expect (and win p0 p1))
+      (finishes (cl-tmux::dispatch-command sess :select-layout-even-v nil)
+                ":select-layout-even-v must not signal an error")))
 
-(test dispatch-choose-window-opens-menu-and-prompt
-  ":choose-window with windows opens a menu overlay for j/k navigation (no prompt)."
-  (with-fake-session (s :nwindows 2)
-    (let ((*overlay* nil) (*prompt* nil)
-          (cl-tmux::*active-menu* nil))
-      (cl-tmux::dispatch-command s :choose-window nil)
-      (assert-overlay-active ":choose-window must open an overlay")
-      ;; choose-window now uses j/k menu navigation, not a prompt.
-      ;; Prompt is no longer opened; the menu handles input directly.
-      (is (not (null cl-tmux::*active-menu*))
-          ":choose-window must set *active-menu*"))))
+  ;;; ── :break-pane dispatch ─────────────────────────────────────────────────────
 
-(test dispatch-choose-window-empty-session-shows-overlay
-  ":choose-window with no windows shows a '(no windows)' overlay."
-  (with-fake-session (s :nwindows 0)
-    (let ((*overlay* nil))
-      (cl-tmux::dispatch-command s :choose-window nil)
-      (assert-overlay-active ":choose-window must open an overlay for empty session")
-      (assert-overlay-contains "no windows" *overlay*
-                               "overlay must say 'no windows' when there are none"))))
+  ;; :break-pane on a single-pane window is a no-op (guard prevents break).
+  (it "dispatch-break-pane-on-single-pane-window-is-noop"
+    (with-fake-session (s :nwindows 1 :npanes 1)
+      (let ((nwindows-before (length (session-windows s))))
+        (finishes (cl-tmux::dispatch-command s :break-pane nil)
+                  ":break-pane on a single-pane window must not error")
+        ;; With only one pane, the guard should prevent creation of a new window.
+        (expect (= nwindows-before (length (session-windows s)))))))
 
-;;; ── :move-window-prompt dispatch ─────────────────────────────────────────────
+  ;; :break-pane on a two-pane window extracts the active pane into a new window.
+  (it "dispatch-break-pane-on-two-pane-window-creates-new-window"
+    (with-two-pane-h-session (sess win p0 p1)
+      (expect (and win p0 p1))
+      (let ((nwindows-before (length (session-windows sess))))
+        ;; break-pane may fail in sandbox (PTY fork), so tolerate errors.
+        (handler-case
+            (progn
+              (cl-tmux::dispatch-command sess :break-pane nil)
+              ;; If it succeeded, a new window should have been created.
+              (expect (> (length (session-windows sess)) nwindows-before)))
+          (error ()
+            ;; Fork failure in sandbox is acceptable; dispatch layer must not error.
+            (expect t))))))
 
-(test dispatch-move-window-prompt-opens-prompt
-  ":move-window-prompt opens a prompt for the destination index."
-  (with-fake-session (s :nwindows 2)
-    (let ((*prompt* nil))
-      (cl-tmux::dispatch-command s :move-window-prompt nil)
-      (is (prompt-active-p) ":move-window-prompt must open a prompt")
-      (is (string= "move-window to index" (prompt-label *prompt*))
-          ":move-window-prompt label must be \"move-window to index\""))))
+  ;;; ── :join-pane dispatch ──────────────────────────────────────────────────────
 
-;;; ── :menu-select dispatch ────────────────────────────────────────────────────
-
-(test dispatch-menu-select-executes-selected-command
-  ":menu-select executes the command of the currently selected menu item."
-  (with-fake-session (s)
-    (let ((cl-tmux::*active-menu*
-            (make-menu :title "t"
-                       :items (list (cons "Detach" :detach))
-                       :selected-index 0)))
-      ;; :menu-select on an item with :detach must return :detach.
-      (is (eq :detach (cl-tmux::dispatch-command s :menu-select nil))
-          ":menu-select on :detach item must return :detach"))))
-
-(test dispatch-menu-select-clears-menu-and-overlay
-  ":menu-select clears *active-menu* and the overlay after executing."
-  (with-fake-session (s)
-    (let ((*overlay* nil)
-          (cl-tmux::*active-menu*
-            (make-menu :title "t"
-                       :items (list (cons "List Keys" :list-keys))
-                       :selected-index 0)))
-      (cl-tmux::dispatch-command s :menu-select nil)
-      (is (null cl-tmux::*active-menu*)
-          ":menu-select must clear *active-menu* after selection"))))
-
-(test dispatch-menu-select-nil-menu-is-noop
-  ":menu-select with *active-menu* NIL is a no-op."
-  (with-fake-session (s)
-    (let ((cl-tmux::*active-menu* nil))
-      (finishes (cl-tmux::dispatch-command s :menu-select nil)
-                ":menu-select with no active menu must not error"))))
-
-;;; ── dispatch-prefix-command: normal (non-copy-mode) table lookup ─────────────
-
-(test dispatch-prefix-command-n-and-p-select-other-window
-  "dispatch-prefix-command 'n' and 'p' each select the other window in a 2-window session."
-  (dolist (key '(#\n #\p))
+  ;; :join-pane opens a prompt for the source window index.
+  (it "dispatch-join-pane-opens-prompt"
     (with-fake-session (s :nwindows 2)
-      (let ((w1 (second (session-windows s))))
-        (cl-tmux::dispatch-prefix-command s (char-code key))
-        (is (eq w1 (session-active-window s))
-            "dispatch-prefix-command ~S must select the other window" key)))))
+      (let ((*prompt* nil))
+        (cl-tmux::dispatch-command s :join-pane nil)
+        (expect (prompt-active-p)))))
 
-(test dispatch-prefix-command-unknown-byte-is-noop
-  "dispatch-prefix-command with a byte that has no key binding is a no-op."
-  (with-fake-session (s)
-    ;; #\x00 is unlikely to have a binding; the call must not error.
-    (finishes (cl-tmux::dispatch-prefix-command s 0)
-              "dispatch-prefix-command with an unbound byte must not error")))
+  ;;; ── :source-file dispatch ────────────────────────────────────────────────────
+
+  ;; :source-file, :run-shell, and :if-shell each open a prompt with the matching label.
+  (it "dispatch-prompt-opening-commands-table"
+    (dolist (c '((:source-file "source-file")
+                 (:run-shell   "run-shell")
+                 (:if-shell    "if-shell")))
+      (destructuring-bind (cmd label) c
+        (with-fake-session (s)
+          (let ((*prompt* nil))
+            (cl-tmux::dispatch-command s cmd nil)
+            (expect (prompt-active-p))
+            (expect (string= label (prompt-label *prompt*))))))))
+
+  ;; :source-file, :run-shell, and :if-shell with empty input do not crash.
+  (it "dispatch-empty-input-is-noop-table"
+    (dolist (cmd '(:source-file :run-shell :if-shell))
+      (with-fake-session (s)
+        (let ((*prompt* nil) (*overlay* nil))
+          (cl-tmux::dispatch-command s cmd nil)
+          (expect (prompt-active-p))
+          (finishes (funcall (prompt-on-submit *prompt*) "")
+                    "~S with empty input must not error" cmd)))))
+
+  ;;; ── :choose-window dispatch ──────────────────────────────────────────────────
+
+  ;; :choose-window with windows opens a menu overlay for j/k navigation (no prompt).
+  (it "dispatch-choose-window-opens-menu-and-prompt"
+    (with-fake-session (s :nwindows 2)
+      (let ((*overlay* nil) (*prompt* nil)
+            (cl-tmux::*active-menu* nil))
+        (cl-tmux::dispatch-command s :choose-window nil)
+        (assert-overlay-active ":choose-window must open an overlay")
+        ;; choose-window now uses j/k menu navigation, not a prompt.
+        ;; Prompt is no longer opened; the menu handles input directly.
+        (expect (not (null cl-tmux::*active-menu*))))))
+
+  ;; :choose-window with no windows shows a '(no windows)' overlay.
+  (it "dispatch-choose-window-empty-session-shows-overlay"
+    (with-fake-session (s :nwindows 0)
+      (let ((*overlay* nil))
+        (cl-tmux::dispatch-command s :choose-window nil)
+        (assert-overlay-active ":choose-window must open an overlay for empty session")
+        (assert-overlay-contains "no windows" *overlay*
+                                 "overlay must say 'no windows' when there are none"))))
+
+  ;;; ── :move-window-prompt dispatch ─────────────────────────────────────────────
+
+  ;; :move-window-prompt opens a prompt for the destination index.
+  (it "dispatch-move-window-prompt-opens-prompt"
+    (with-fake-session (s :nwindows 2)
+      (let ((*prompt* nil))
+        (cl-tmux::dispatch-command s :move-window-prompt nil)
+        (expect (prompt-active-p))
+        (expect (string= "move-window to index" (prompt-label *prompt*))))))
+
+  ;;; ── :menu-select dispatch ────────────────────────────────────────────────────
+
+  ;; :menu-select executes the command of the currently selected menu item.
+  (it "dispatch-menu-select-executes-selected-command"
+    (with-fake-session (s)
+      (let ((cl-tmux::*active-menu*
+              (make-menu :title "t"
+                         :items (list (cons "Detach" :detach))
+                         :selected-index 0)))
+        ;; :menu-select on an item with :detach must return :detach.
+        (expect (eq :detach (cl-tmux::dispatch-command s :menu-select nil))))))
+
+  ;; :menu-select clears *active-menu* and the overlay after executing.
+  (it "dispatch-menu-select-clears-menu-and-overlay"
+    (with-fake-session (s)
+      (let ((*overlay* nil)
+            (cl-tmux::*active-menu*
+              (make-menu :title "t"
+                         :items (list (cons "List Keys" :list-keys))
+                         :selected-index 0)))
+        (cl-tmux::dispatch-command s :menu-select nil)
+        (expect (null cl-tmux::*active-menu*)))))
+
+  ;; :menu-select with *active-menu* NIL is a no-op.
+  (it "dispatch-menu-select-nil-menu-is-noop"
+    (with-fake-session (s)
+      (let ((cl-tmux::*active-menu* nil))
+        (finishes (cl-tmux::dispatch-command s :menu-select nil)
+                  ":menu-select with no active menu must not error"))))
+
+  ;;; ── dispatch-prefix-command: normal (non-copy-mode) table lookup ─────────────
+
+  ;; dispatch-prefix-command 'n' and 'p' each select the other window in a 2-window session.
+  (it "dispatch-prefix-command-n-and-p-select-other-window"
+    (dolist (key '(#\n #\p))
+      (with-fake-session (s :nwindows 2)
+        (let ((w1 (second (session-windows s))))
+          (cl-tmux::dispatch-prefix-command s (char-code key))
+          (expect (eq w1 (session-active-window s)))))))
+
+  ;; dispatch-prefix-command with a byte that has no key binding is a no-op.
+  (it "dispatch-prefix-command-unknown-byte-is-noop"
+    (with-fake-session (s)
+      ;; #\x00 is unlikely to have a binding; the call must not error.
+      (finishes (cl-tmux::dispatch-prefix-command s 0)
+                "dispatch-prefix-command with an unbound byte must not error"))))

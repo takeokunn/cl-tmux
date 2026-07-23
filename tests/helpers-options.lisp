@@ -78,9 +78,5 @@
                                `(cl-tmux/options:get-server-option ,option nil)
                                `(cl-tmux/options:get-option ,option nil))))
          ,(if present-p
-              `(is (equal ,expected ,actual-sym)
-                   "~A must store ~S in ~A options, got ~S"
-                   ,context ,expected ,(if server-p "server" "global") ,actual-sym)
-              `(is (null ,actual-sym)
-                   "~A must remove ~S from ~A options, got ~S"
-                   ,context ,option ,(if server-p "server" "global") ,actual-sym))))))
+              `(expect (equal ,expected ,actual-sym))
+              `(expect (null ,actual-sym)))))))

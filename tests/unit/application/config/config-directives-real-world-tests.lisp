@@ -3,8 +3,6 @@
 ;;;; Real-world .tmux.conf end-to-end fixture for config directives.
 ;;;; config-directives-tests.lisp declares config-directives-suite.
 
-(in-suite config-directives-suite)
-
 ;;; A representative config exercising the constructs real configs
 ;;; (oh-my-tmux/gpakosz, common tutorials) actually use: canonical commands,
 ;;; -g/-s/-r/-n/-T flags, user options, style strings, format strings,
@@ -65,78 +63,58 @@
     "joined")
   "Line list for the real-world config fixture (kept as data for readability).")
 
-(test real-world-tmux-conf-loads-with-effects
-  "The representative real-world .tmux.conf loads end-to-end and its directives
-   take observable effect (options, user options, bindings, %if suppression).
-   Binds the production format-based %if condition evaluator (main.lisp installs
-   the same shape at startup; the test default of NIL treats every %if as true)."
-  (with-isolated-config
-   (with-isolated-hooks
-    (let ((cl-tmux/config:*config-condition-evaluator*
-            (lambda (cond-str) (cl-tmux/format:expand-format cond-str nil)))
-          (path (merge-pathnames
-                 (format nil "cl-tmux-realworld-~D.conf" (random 1000000))
-                 (uiop:temporary-directory))))
-      (unwind-protect
-           (progn
-             (with-open-file (s path :direction :output :if-exists :supersede)
-               (dolist (line +real-world-tmux-conf-lines+)
-                 (write-line line s)))
-             (is-true (cl-tmux/config:load-config-file path)
-                      "the config file must load")
-             ;; Options (typed coercion + strings + styles + formats).
-             (is (eql 5000 (cl-tmux/options:get-option "history-limit"))
-                 "history-limit must be 5000")
-             (is (eq t (cl-tmux/options:get-option "mouse"))
-                 "mouse must be on")
-             (is (eq t (cl-tmux/options:get-option "renumber-windows"))
-                 "renumber-windows must be on")
-             (is (string= "#[fg=green](#S) "
-                          (cl-tmux/options:get-option "status-left"))
-                 "status-left format string must survive verbatim")
-             (is (string= "fg=black,bg=white"
-                          (cl-tmux/options:get-option "window-status-current-style"))
-                 "style string must survive verbatim")
-             (is (string= "vi" (cl-tmux/options:get-option "mode-keys"))
-                 "mode-keys must be vi")
-             ;; User options (@-prefixed) including the `;` sequence line.
-             (is (string= "tmux-plugins/tmux-sensible"
-                          (cl-tmux/options:get-option "@plugin"))
-                 "@plugin user option must be stored")
-             (is (string= "yes" (cl-tmux/options:get-option "@cond-ok"))
-                 "if-shell true branch must have run")
-             (is (string= "1" (cl-tmux/options:get-option "@multi"))
-                 "first segment of the `;` sequence must apply")
-             (is (string= "2" (cl-tmux/options:get-option "@multi2"))
-                 "second segment of the `;` sequence must apply")
-             ;; %if false branch must NOT have run.
-             (is (null (cl-tmux/options:get-option "@never" nil))
-                 "%if false branch must be suppressed")
-             ;; Bindings: prefix table, repeat flag path,
-             ;; and the copy-mode-vi table.
-             (is-true (cl-tmux/config:key-table-lookup "prefix" #\-)
-                      "bind - split-window -v must bind in the prefix table")
-             (is-true (cl-tmux/config:key-table-lookup "prefix" #\h)
-                      "bind -r h select-pane -L must bind")
-             (is-true (cl-tmux/config:key-table-lookup "copy-mode-vi" #\v)
-                      "copy-mode-vi v must bind")
-             (is-true (cl-tmux/config:key-table-lookup "copy-mode-vi" #\y)
-                      "copy-mode-vi y must bind")
-             ;; Wave 2: terminal-overrides append (present in virtually every
-             ;; real config), env, unbind, reload binding, set-hook, and
-             ;; backslash line continuation.
-             (is (search "xterm-256color:Tc"
-                         (or (cl-tmux/options:get-option "terminal-overrides" nil) ""))
-                 "set-option -ga terminal-overrides must be accepted and stored")
-             (is (string= "fixture-value"
-                          (or (sb-ext:posix-getenv "CLTMUX_FIXTURE_ENV") ""))
-                 "set-environment -g must reach the process environment")
-             (is (null (cl-tmux/config:key-table-lookup "prefix" #\x))
-                 "unbind x must remove the earlier bind x")
-             (is-true (cl-tmux/config:key-table-lookup "prefix" #\r)
-                      "the classic reload binding (source \\; display) must bind")
-             (is-true (gethash "after-new-window" cl-tmux/hooks::*command-hooks*)
-                      "set-hook -g after-new-window must register a command hook")
-             (is (string= "joined" (cl-tmux/options:get-option "@continued"))
-                 "backslash line continuation must join the next line"))
-        (ignore-errors (delete-file path)))))))
+(describe "config-directives-suite"
+
+  ;; The representative real-world .tmux.conf loads end-to-end and its directives
+  ;; take observable effect (options, user options, bindings, %if suppression).
+  ;; Binds the production format-based %if condition evaluator (main.lisp installs
+  ;; the same shape at startup; the test default of NIL treats every %if as true).
+  (it "real-world-tmux-conf-loads-with-effects"
+    (with-isolated-config
+     (with-isolated-hooks
+      (let ((cl-tmux/config:*config-condition-evaluator*
+              (lambda (cond-str) (cl-tmux/format:expand-format cond-str nil)))
+            (path (merge-pathnames
+                   (format nil "cl-tmux-realworld-~D.conf" (random 1000000))
+                   (uiop:temporary-directory))))
+        (unwind-protect
+             (progn
+               (with-open-file (s path :direction :output :if-exists :supersede)
+                 (dolist (line +real-world-tmux-conf-lines+)
+                   (write-line line s)))
+               (expect (cl-tmux/config:load-config-file path) :to-be-truthy)
+               ;; Options (typed coercion + strings + styles + formats).
+               (expect (eql 5000 (cl-tmux/options:get-option "history-limit")))
+               (expect (eq t (cl-tmux/options:get-option "mouse")))
+               (expect (eq t (cl-tmux/options:get-option "renumber-windows")))
+               (expect (string= "#[fg=green](#S) "
+                            (cl-tmux/options:get-option "status-left")))
+               (expect (string= "fg=black,bg=white"
+                            (cl-tmux/options:get-option "window-status-current-style")))
+               (expect (string= "vi" (cl-tmux/options:get-option "mode-keys")))
+               ;; User options (@-prefixed) including the `;` sequence line.
+               (expect (string= "tmux-plugins/tmux-sensible"
+                            (cl-tmux/options:get-option "@plugin")))
+               (expect (string= "yes" (cl-tmux/options:get-option "@cond-ok")))
+               (expect (string= "1" (cl-tmux/options:get-option "@multi")))
+               (expect (string= "2" (cl-tmux/options:get-option "@multi2")))
+               ;; %if false branch must NOT have run.
+               (expect (null (cl-tmux/options:get-option "@never" nil)))
+               ;; Bindings: prefix table, repeat flag path,
+               ;; and the copy-mode-vi table.
+               (expect (cl-tmux/config:key-table-lookup "prefix" #\-) :to-be-truthy)
+               (expect (cl-tmux/config:key-table-lookup "prefix" #\h) :to-be-truthy)
+               (expect (cl-tmux/config:key-table-lookup "copy-mode-vi" #\v) :to-be-truthy)
+               (expect (cl-tmux/config:key-table-lookup "copy-mode-vi" #\y) :to-be-truthy)
+               ;; Wave 2: terminal-overrides append (present in virtually every
+               ;; real config), env, unbind, reload binding, set-hook, and
+               ;; backslash line continuation.
+               (expect (search "xterm-256color:Tc"
+                           (or (cl-tmux/options:get-option "terminal-overrides" nil) "")))
+               (expect (string= "fixture-value"
+                            (or (sb-ext:posix-getenv "CLTMUX_FIXTURE_ENV") "")))
+               (expect (null (cl-tmux/config:key-table-lookup "prefix" #\x)))
+               (expect (cl-tmux/config:key-table-lookup "prefix" #\r) :to-be-truthy)
+               (expect (gethash "after-new-window" cl-tmux/hooks::*command-hooks*) :to-be-truthy)
+               (expect (string= "joined" (cl-tmux/options:get-option "@continued"))))
+          (ignore-errors (delete-file path))))))))

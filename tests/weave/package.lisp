@@ -20,6 +20,7 @@
                 #:repeatable-commands
                 #:binding-conflicts
                 #:shadowing-bindings
+                #:unique-bindings
                 #:explain-binding
                 ;; Command-metadata read-model
                 #:current-command-rulebase
@@ -31,14 +32,14 @@
                 #:binding
                 #:conflict
                 #:shadows-root
+                #:unique-binding
                 #:repeatable
                 #:repeatable-command
                 #:note
                 #:command
                 #:usage
                 #:accepts-flag
-                #:scriptable
-                #:flag-shared)
+                #:scriptable)
   ;; cl-prolog's own cl-weave helpers for asserting raw queries.
   (:import-from #:cl-prolog/weave
                 #:assert-query

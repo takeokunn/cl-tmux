@@ -11,7 +11,6 @@
 ;;;;     (accepts-flag NAME FLAG)    NAME accepts single-letter FLAG (a string)
 ;;;;   RULES
 ;;;;     (scriptable NAME)           :- (usage NAME "")   — accepts no arguments
-;;;;     (flag-shared FLAG A B)      :- two distinct commands both accept FLAG
 ;;;;
 ;;;; This is strictly cold-path (introspection / validation), never the hot
 ;;;; dispatch loop.
@@ -52,11 +51,7 @@ Reads the internal `*command-usage-table*'; a cold-path introspection use."
   "Static rule clauses for the command-metadata rulebase."
   (list
    (cl-prolog:make-clause '(scriptable ?name)
-                          (list '(usage ?name "")))
-   (cl-prolog:make-clause '(flag-shared ?flag ?a ?b)
-                          (list '(accepts-flag ?a ?flag)
-                                '(accepts-flag ?b ?flag)
-                                (list '|\\=| '?a '?b)))))
+                          (list '(usage ?name "")))))
 
 (defun build-command-rulebase (usage-pairs)
   "Build a cl-prolog rulebase from USAGE-PAIRS (a NAME . USAGE alist)."
@@ -80,23 +75,33 @@ Reads the internal `*command-usage-table*'; a cold-path introspection use."
   "True when command NAME accepts single-character FLAG (a one-char string)."
   (cl-prolog:prolog-succeeds-p rulebase (list 'accepts-flag name flag)))
 
+;;; NOTE: these three deliberately do NOT use cl-prolog's SETOF/3, despite it
+;;; looking like a natural fit — command/flag names in this domain are raw
+;;; Lisp strings, and cl-prolog's standard-order-of-terms comparator (which
+;;; SETOF needs internally to sort/dedup) has no case for STRINGP; it signals
+;;; "Not a Prolog term" as soon as it must order two distinct string
+;;; solutions. Verified experimentally against the live command table (which
+;;; has far more than one distinct command/flag, so the bug reliably
+;;; triggers). See the parallel note on REPEATABLE-COMMANDS in
+;;; key-rulebase.lisp for the same finding in the other reasoning domain.
+;;; They use FINDALL/3 (via %FINDALL, defined in key-rulebase.lisp) instead —
+;;; it does not sort/dedup internally, so the STRINGP limitation above does
+;;; not apply; dedup/sort stay explicit Lisp-level steps here.
+
 (defun commands-with-flag (rulebase flag)
   "Return the canonical command names that accept FLAG, sorted."
-  (let ((out '()))
-    (dolist (solution (cl-prolog:query-prolog rulebase (list 'accepts-flag '?name flag)))
-      (pushnew (cl-prolog:solution-binding '?name solution) out :test #'equal))
-    (sort out #'string<)))
+  (sort (remove-duplicates (%findall rulebase '?name (list 'accepts-flag '?name flag))
+                           :test #'equal :from-end t)
+        #'string<))
 
 (defun flags-of-command (rulebase name)
   "Return the flags command NAME accepts, sorted."
-  (let ((out '()))
-    (dolist (solution (cl-prolog:query-prolog rulebase (list 'accepts-flag name '?flag)))
-      (pushnew (cl-prolog:solution-binding '?flag solution) out :test #'equal))
-    (sort out #'string<)))
+  (sort (remove-duplicates (%findall rulebase '?flag (list 'accepts-flag name '?flag))
+                           :test #'equal :from-end t)
+        #'string<))
 
 (defun scriptable-commands (rulebase)
   "Return the canonical commands that take no arguments, sorted."
-  (let ((out '()))
-    (dolist (solution (cl-prolog:query-prolog rulebase '(scriptable ?name)))
-      (pushnew (cl-prolog:solution-binding '?name solution) out :test #'equal))
-    (sort out #'string<)))
+  (sort (remove-duplicates (%findall rulebase '?name '(scriptable ?name))
+                           :test #'equal :from-end t)
+        #'string<))

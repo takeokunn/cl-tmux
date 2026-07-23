@@ -2,219 +2,207 @@
 
 ;;;; Protocol field and text codec tests.
 
-(in-suite protocol-suite)
+(describe "protocol-suite"
 
-;;; ── read-u32 dedicated test ─────────────────────────────────────────────────
+  ;; ── read-u32 dedicated test ─────────────────────────────────────────────────
 
-(test read-u32-decodes-big-endian
-  "read-u32 reads four bytes at START as a big-endian u32."
-  (let ((buffer (make-array 8 :element-type '(unsigned-byte 8)
-                              :initial-contents '(0 0 0 0 0 0 1 0))))
-    (is (= 0      (cl-tmux/protocol:read-u32 buffer 0)) "all-zero word")
-    (is (= 256    (cl-tmux/protocol:read-u32 buffer 4)) "0 0 1 0 = 256")
-    (let ((buf2 (cl-tmux/protocol:u32-octets #xDEADBEEF)))
-      (is (= #xDEADBEEF (cl-tmux/protocol:read-u32 buf2 0)) "0xDEADBEEF round-trip"))))
+  ;; read-u32 reads four bytes at START as a big-endian u32.
+  (it "read-u32-decodes-big-endian"
+    (let ((buffer (make-array 8 :element-type '(unsigned-byte 8)
+                                :initial-contents '(0 0 0 0 0 0 1 0))))
+      (expect (= 0      (cl-tmux/protocol:read-u32 buffer 0)))
+      (expect (= 256    (cl-tmux/protocol:read-u32 buffer 4)))
+      (let ((buf2 (cl-tmux/protocol:u32-octets #xDEADBEEF)))
+        (expect (= #xDEADBEEF (cl-tmux/protocol:read-u32 buf2 0))))))
 
-;;; ── split-on-nul-bytes ──────────────────────────────────────────────────────
+  ;; ── split-on-nul-bytes ──────────────────────────────────────────────────────
 
-(test split-on-nul-bytes-empty-input-returns-empty-list
-  "split-on-nul-bytes on an empty buffer returns an empty list."
-  (is (null (cl-tmux/protocol:split-on-nul-bytes #()))
-      "empty input must yield nil"))
+  ;; split-on-nul-bytes on an empty buffer returns an empty list.
+  (it "split-on-nul-bytes-empty-input-returns-empty-list"
+    (expect (null (cl-tmux/protocol:split-on-nul-bytes #()))))
 
-(test split-on-nul-bytes-single-field
-  "split-on-nul-bytes with one NUL-terminated field returns a one-element list."
-  (let* ((bytes (babel:string-to-octets "hello" :encoding :utf-8))
-         (buf   (concatenate '(simple-array (unsigned-byte 8) (*)) bytes #(0))))
-    (is (equal '("hello") (cl-tmux/protocol:split-on-nul-bytes buf))
-        "single NUL-terminated field must yield a one-element list")))
+  ;; split-on-nul-bytes with one NUL-terminated field returns a one-element list.
+  (it "split-on-nul-bytes-single-field"
+    (let* ((bytes (babel:string-to-octets "hello" :encoding :utf-8))
+           (buf   (concatenate '(simple-array (unsigned-byte 8) (*)) bytes #(0))))
+      (expect (equal '("hello") (cl-tmux/protocol:split-on-nul-bytes buf)))))
 
-(test split-on-nul-bytes-multiple-fields
-  "split-on-nul-bytes with multiple NUL-separated fields returns them all."
-  (let* ((a (babel:string-to-octets "alpha" :encoding :utf-8))
-         (b (babel:string-to-octets "beta"  :encoding :utf-8))
-         (c (babel:string-to-octets "gamma" :encoding :utf-8))
-         (buf (concatenate '(simple-array (unsigned-byte 8) (*))
-                           a #(0) b #(0) c #(0))))
-    (is (equal '("alpha" "beta" "gamma")
-               (cl-tmux/protocol:split-on-nul-bytes buf))
-        "three NUL-terminated fields must be returned in order")))
+  ;; split-on-nul-bytes with multiple NUL-separated fields returns them all.
+  (it "split-on-nul-bytes-multiple-fields"
+    (let* ((a (babel:string-to-octets "alpha" :encoding :utf-8))
+           (b (babel:string-to-octets "beta"  :encoding :utf-8))
+           (c (babel:string-to-octets "gamma" :encoding :utf-8))
+           (buf (concatenate '(simple-array (unsigned-byte 8) (*))
+                             a #(0) b #(0) c #(0))))
+      (expect (equal '("alpha" "beta" "gamma")
+                     (cl-tmux/protocol:split-on-nul-bytes buf)))))
 
-(test split-on-nul-bytes-no-nul-returns-empty-list
-  "split-on-nul-bytes with no NUL byte returns an empty list (no complete field)."
-  (let ((buf (babel:string-to-octets "no-nul" :encoding :utf-8)))
-    (is (null (cl-tmux/protocol:split-on-nul-bytes buf))
-        "no NUL byte → empty list")))
+  ;; split-on-nul-bytes with no NUL byte returns an empty list (no complete field).
+  (it "split-on-nul-bytes-no-nul-returns-empty-list"
+    (let ((buf (babel:string-to-octets "no-nul" :encoding :utf-8)))
+      (expect (null (cl-tmux/protocol:split-on-nul-bytes buf)))))
 
-;;; ── command-name-to-string ──────────────────────────────────────────────────
+  ;; ── command-name-to-string ──────────────────────────────────────────────────
 
-(test command-name-to-string-table
-  "command-name-to-string downcases keywords (any case) and passes strings through unchanged."
-  (dolist (c '((:new-window  "new-window"  "lowercase keyword → downcased")
-               (:NEW-WINDOW  "new-window"  "uppercase keyword → downcased")
-               (:SELECT-PANE "select-pane" "uppercase keyword → downcased")
-               ("select-pane" "select-pane" "string → pass through")))
-    (destructuring-bind (input expected desc) c
-      (is (string= expected (cl-tmux/protocol:command-name-to-string input))
-          "~A" desc))))
+  ;; command-name-to-string downcases keywords (any case) and passes strings through unchanged.
+  (it "command-name-to-string-table"
+    (dolist (c '((:new-window  "new-window"  "lowercase keyword → downcased")
+                 (:NEW-WINDOW  "new-window"  "uppercase keyword → downcased")
+                 (:SELECT-PANE "select-pane" "uppercase keyword → downcased")
+                 ("select-pane" "select-pane" "string → pass through")))
+      (destructuring-bind (input expected desc) c
+        (declare (ignore desc))
+        (expect (string= expected (cl-tmux/protocol:command-name-to-string input))))))
 
-;;; ── assemble-command-fields ─────────────────────────────────────────────────
+  ;; ── assemble-command-fields ─────────────────────────────────────────────────
 
-(test assemble-command-fields-table
-  "assemble-command-fields orders fields as [target] name [args...]."
-  (dolist (c '(("new-window"  nil    nil          ("new-window")               "name only")
-               ("select-pane" "$1:0" nil          ("$1:0" "select-pane")       "target + name")
-               ("send-keys"   nil    ("C-c" "")   ("send-keys" "C-c" "")       "name + args")
-               ("resize-pane" "2:0"  ("-U" "5")   ("2:0" "resize-pane" "-U" "5") "target + name + args")))
-    (destructuring-bind (name target args expected desc) c
-      (is (equal expected (cl-tmux/protocol:assemble-command-fields name target args))
-          "~A" desc))))
+  ;; assemble-command-fields orders fields as [target] name [args...].
+  (it "assemble-command-fields-table"
+    (dolist (c '(("new-window"  nil    nil          ("new-window")               "name only")
+                 ("select-pane" "$1:0" nil          ("$1:0" "select-pane")       "target + name")
+                 ("send-keys"   nil    ("C-c" "")   ("send-keys" "C-c" "")       "name + args")
+                 ("resize-pane" "2:0"  ("-U" "5")   ("2:0" "resize-pane" "-U" "5") "target + name + args")))
+      (destructuring-bind (name target args expected desc) c
+        (declare (ignore desc))
+        (expect (equal expected (cl-tmux/protocol:assemble-command-fields name target args))))))
 
-;;; ── encode-fields-to-buffer ─────────────────────────────────────────────────
+  ;; ── encode-fields-to-buffer ─────────────────────────────────────────────────
 
-(test encode-fields-to-buffer-empty-fields-produces-empty-buffer
-  "encode-fields-to-buffer with no fields produces an empty buffer."
-  (let ((buf (cl-tmux/protocol:encode-fields-to-buffer '())))
-    (is (= 0 (length buf)) "no fields → empty buffer")))
+  ;; encode-fields-to-buffer with no fields produces an empty buffer.
+  (it "encode-fields-to-buffer-empty-fields-produces-empty-buffer"
+    (let ((buf (cl-tmux/protocol:encode-fields-to-buffer '())))
+      (expect (= 0 (length buf)))))
 
-(test encode-fields-to-buffer-single-field-has-trailing-nul
-  "encode-fields-to-buffer packs one field followed by a NUL byte."
-  (let* ((field-bytes (babel:string-to-octets "hello" :encoding :utf-8))
-         (buf (cl-tmux/protocol:encode-fields-to-buffer (list field-bytes))))
-    (is (= 6 (length buf)) "5 data bytes + 1 NUL = 6")
-    (is (= 0 (aref buf 5)) "last byte must be NUL")))
+  ;; encode-fields-to-buffer packs one field followed by a NUL byte.
+  (it "encode-fields-to-buffer-single-field-has-trailing-nul"
+    (let* ((field-bytes (babel:string-to-octets "hello" :encoding :utf-8))
+           (buf (cl-tmux/protocol:encode-fields-to-buffer (list field-bytes))))
+      (expect (= 6 (length buf)))
+      (expect (= 0 (aref buf 5)))))
 
-(test encode-fields-to-buffer-multiple-fields-split-by-nuls
-  "encode-fields-to-buffer places a NUL after each field."
-  (let* ((f1  (babel:string-to-octets "ab" :encoding :utf-8))
-         (f2  (babel:string-to-octets "cd" :encoding :utf-8))
-         (buf (cl-tmux/protocol:encode-fields-to-buffer (list f1 f2))))
-    ;; Layout: a b NUL c d NUL → 6 bytes
-    (is (= 6 (length buf)) "2+1+2+1 = 6 bytes")
-    (is (= 0 (aref buf 2)) "NUL after first field at index 2")
-    (is (= 0 (aref buf 5)) "NUL after second field at index 5")))
+  ;; encode-fields-to-buffer places a NUL after each field.
+  (it "encode-fields-to-buffer-multiple-fields-split-by-nuls"
+    (let* ((f1  (babel:string-to-octets "ab" :encoding :utf-8))
+           (f2  (babel:string-to-octets "cd" :encoding :utf-8))
+           (buf (cl-tmux/protocol:encode-fields-to-buffer (list f1 f2))))
+      ;; Layout: a b NUL c d NUL → 6 bytes
+      (expect (= 6 (length buf)))
+      (expect (= 0 (aref buf 2)))
+      (expect (= 0 (aref buf 5)))))
 
-;;; ── to-octets ───────────────────────────────────────────────────────────────
+  ;; ── to-octets ───────────────────────────────────────────────────────────────
 
-(test to-octets-coerces-list-to-simple-vector
-  "to-octets coerces a list of octets to a simple (unsigned-byte 8) vector."
-  (let ((result (to-octets '(1 2 3))))
-    (is (typep result '(simple-array (unsigned-byte 8) (*)))
-        "result must be a simple octet vector")
-    (is (equalp #(1 2 3) result) "contents must match")))
+  ;; to-octets coerces a list of octets to a simple (unsigned-byte 8) vector.
+  (it "to-octets-coerces-list-to-simple-vector"
+    (let ((result (to-octets '(1 2 3))))
+      (expect (typep result '(simple-array (unsigned-byte 8) (*))))
+      (expect (equalp #(1 2 3) result))))
 
-(test to-octets-idempotent-on-simple-vector
-  "to-octets on an already-simple octet vector returns an equivalent vector."
-  (let* ((original #(10 20 30))
-         (result   (to-octets original)))
-    (is (equalp original result) "content must be preserved")))
+  ;; to-octets on an already-simple octet vector returns an equivalent vector.
+  (it "to-octets-idempotent-on-simple-vector"
+    (let* ((original #(10 20 30))
+           (result   (to-octets original)))
+      (expect (equalp original result))))
 
-;;; ── decode-size / decode-text edge cases ────────────────────────────────────
+  ;; ── decode-size / decode-text edge cases ────────────────────────────────────
 
-(test decode-size-zero-rows-zero-cols
-  "decode-size decodes a (0,0) payload correctly."
-  (multiple-value-bind (rows cols) (decode-size (u16-octets-pair 0 0))
-    (is (= 0 rows) "rows must be 0")
-    (is (= 0 cols) "cols must be 0")))
+  ;; decode-size decodes a (0,0) payload correctly.
+  (it "decode-size-zero-rows-zero-cols"
+    (multiple-value-bind (rows cols) (decode-size (u16-octets-pair 0 0))
+      (expect (= 0 rows))
+      (expect (= 0 cols))))
 
-(test decode-size-max-u16-values
-  "decode-size round-trips the maximum u16 values (65535 x 65535)."
-  (multiple-value-bind (rows cols) (decode-size (u16-octets-pair 65535 65535))
-    (is (= 65535 rows) "rows must be 65535")
-    (is (= 65535 cols) "cols must be 65535")))
+  ;; decode-size round-trips the maximum u16 values (65535 x 65535).
+  (it "decode-size-max-u16-values"
+    (multiple-value-bind (rows cols) (decode-size (u16-octets-pair 65535 65535))
+      (expect (= 65535 rows))
+      (expect (= 65535 cols))))
 
-(test decode-text-empty-payload
-  "decode-text on an empty octet vector returns an empty string."
-  (is (string= "" (decode-text #()))
-      "empty payload must decode to empty string"))
+  ;; decode-text on an empty octet vector returns an empty string.
+  (it "decode-text-empty-payload"
+    (expect (string= "" (decode-text #()))))
 
-(test decode-text-ascii
-  "decode-text decodes a plain ASCII payload to a string."
-  (let ((bytes (babel:string-to-octets "hello" :encoding :utf-8)))
-    (is (string= "hello" (decode-text bytes))
-        "ASCII payload must decode correctly")))
+  ;; decode-text decodes a plain ASCII payload to a string.
+  (it "decode-text-ascii"
+    (let ((bytes (babel:string-to-octets "hello" :encoding :utf-8)))
+      (expect (string= "hello" (decode-text bytes)))))
 
-;;; ── decode-command-payload empty / degenerate input ─────────────────────────
+  ;; ── decode-command-payload empty / degenerate input ─────────────────────────
 
-(test decode-command-payload-empty-payload-returns-nil-values
-  "decode-command-payload on a zero-byte payload returns (values NIL NIL NIL)
-   without signalling; the caller must handle the empty-fields case explicitly."
-  (multiple-value-bind (command target args)
-      (decode-command-payload #())
-    (is (null command) "command must be NIL for empty payload")
-    (is (null target)  "target must be NIL for empty payload")
-    (is (null args)    "args must be NIL for empty payload")))
-
-(test decode-command-payload-no-nul-byte-returns-nil-values
-  "decode-command-payload on a payload with no NUL terminator returns
-   (values NIL NIL NIL) — no NUL means no complete field was transmitted."
-  (let ((payload (babel:string-to-octets "no-nul-here" :encoding :utf-8)))
+  ;; decode-command-payload on a zero-byte payload returns (values NIL NIL NIL)
+  ;; without signalling; the caller must handle the empty-fields case explicitly.
+  (it "decode-command-payload-empty-payload-returns-nil-values"
     (multiple-value-bind (command target args)
-        (decode-command-payload payload)
-      (is (null command) "command must be NIL when no NUL found")
-      (is (null target)  "target must be NIL when no NUL found")
-      (is (null args)    "args must be NIL when no NUL found"))))
+        (decode-command-payload #())
+      (expect (null command))
+      (expect (null target))
+      (expect (null args))))
 
-;;; ── msg-command edge cases ───────────────────────────────────────────────────
-
-(test msg-command-empty-args-list-roundtrips
-  "msg-command with an explicit empty args list produces the same frame as NIL args."
-  (let ((frame-nil  (msg-command :new-window nil nil))
-        (frame-list (msg-command :new-window nil '())))
-    (is (equalp frame-nil frame-list)
-        "nil args and empty-list args must produce identical frames")))
-
-(test msg-command-string-command-name-roundtrips
-  "msg-command accepts a plain string command-name (not a keyword)."
-  (let ((frame (msg-command "split-window" nil nil)))
-    (multiple-value-bind (type payload) (decode-frame frame)
-      (is (= +msg-command+ type))
+  ;; decode-command-payload on a payload with no NUL terminator returns
+  ;; (values NIL NIL NIL) — no NUL means no complete field was transmitted.
+  (it "decode-command-payload-no-nul-byte-returns-nil-values"
+    (let ((payload (babel:string-to-octets "no-nul-here" :encoding :utf-8)))
       (multiple-value-bind (command target args)
           (decode-command-payload payload)
-        (is (eq :split-window command) "string name must round-trip as keyword")
-        (is (null target))
-        (is (null args))))))
+        (expect (null command))
+        (expect (null target))
+        (expect (null args)))))
 
-;;; ── to-octets on an empty list ───────────────────────────────────────────────
+  ;; ── msg-command edge cases ───────────────────────────────────────────────────
 
-(test to-octets-empty-list-produces-empty-vector
-  "to-octets on an empty list produces an empty (unsigned-byte 8) vector."
-  (let ((result (to-octets '())))
-    (is (typep result '(simple-array (unsigned-byte 8) (*)))
-        "result must be a simple octet vector")
-    (is (= 0 (length result)) "result must have zero elements")))
+  ;; msg-command with an explicit empty args list produces the same frame as NIL args.
+  (it "msg-command-empty-args-list-roundtrips"
+    (let ((frame-nil  (msg-command :new-window nil nil))
+          (frame-list (msg-command :new-window nil '())))
+      (expect (equalp frame-nil frame-list))))
 
-;;; ── split-on-nul-bytes trailing data after final NUL ─────────────────────────
+  ;; msg-command accepts a plain string command-name (not a keyword).
+  (it "msg-command-string-command-name-roundtrips"
+    (let ((frame (msg-command "split-window" nil nil)))
+      (multiple-value-bind (type payload) (decode-frame frame)
+        (expect (= +msg-command+ type))
+        (multiple-value-bind (command target args)
+            (decode-command-payload payload)
+          (expect (eq :split-window command))
+          (expect (null target))
+          (expect (null args))))))
 
-(test split-on-nul-bytes-trailing-bytes-after-last-nul-are-ignored
-  "split-on-nul-bytes ignores bytes that follow the final NUL (incomplete field)."
-  (let* ((a     (babel:string-to-octets "alpha" :encoding :utf-8))
-         ;; 'beta' bytes appended WITHOUT a terminating NUL.
-         (b     (babel:string-to-octets "beta"  :encoding :utf-8))
-         (buf   (concatenate '(simple-array (unsigned-byte 8) (*))
-                             a #(0) b)))
-    (is (equal '("alpha")
-               (cl-tmux/protocol:split-on-nul-bytes buf))
-        "only the NUL-terminated field must be returned; trailing bytes are ignored")))
+  ;; ── to-octets on an empty list ───────────────────────────────────────────────
 
-;;; ── assemble-command-fields preserves arg order ──────────────────────────────
+  ;; to-octets on an empty list produces an empty (unsigned-byte 8) vector.
+  (it "to-octets-empty-list-produces-empty-vector"
+    (let ((result (to-octets '())))
+      (expect (typep result '(simple-array (unsigned-byte 8) (*))))
+      (expect (= 0 (length result)))))
 
-(test assemble-command-fields-preserves-multiple-args-order
-  "assemble-command-fields appends many args in the supplied order."
-  (is (equal '("cmd" "a" "b" "c" "d")
-             (cl-tmux/protocol:assemble-command-fields "cmd" nil '("a" "b" "c" "d")))
-      "four args must appear in order after the command name"))
+  ;; ── split-on-nul-bytes trailing data after final NUL ─────────────────────────
 
-;;; ── encode-fields-to-buffer / split-on-nul-bytes are symmetric ──────────────
+  ;; split-on-nul-bytes ignores bytes that follow the final NUL (incomplete field).
+  (it "split-on-nul-bytes-trailing-bytes-after-last-nul-are-ignored"
+    (let* ((a     (babel:string-to-octets "alpha" :encoding :utf-8))
+           ;; 'beta' bytes appended WITHOUT a terminating NUL.
+           (b     (babel:string-to-octets "beta"  :encoding :utf-8))
+           (buf   (concatenate '(simple-array (unsigned-byte 8) (*))
+                               a #(0) b)))
+      (expect (equal '("alpha")
+                     (cl-tmux/protocol:split-on-nul-bytes buf)))))
 
-(test encode-fields-to-buffer-and-split-on-nul-bytes-are-symmetric
-  "Encoding a list of strings with encode-fields-to-buffer and decoding with
-   split-on-nul-bytes must recover the original strings."
-  (let* ((strings  '("alpha" "beta" "gamma" "delta"))
-         (octets   (mapcar (lambda (s)
-                             (babel:string-to-octets s :encoding :utf-8))
-                           strings))
-         (buf      (cl-tmux/protocol:encode-fields-to-buffer octets))
-         (decoded  (cl-tmux/protocol:split-on-nul-bytes buf)))
-    (is (equal strings decoded)
-        "round-trip through encode-fields-to-buffer + split-on-nul-bytes must be lossless")))
+  ;; ── assemble-command-fields preserves arg order ──────────────────────────────
+
+  ;; assemble-command-fields appends many args in the supplied order.
+  (it "assemble-command-fields-preserves-multiple-args-order"
+    (expect (equal '("cmd" "a" "b" "c" "d")
+                   (cl-tmux/protocol:assemble-command-fields "cmd" nil '("a" "b" "c" "d")))))
+
+  ;; ── encode-fields-to-buffer / split-on-nul-bytes are symmetric ──────────────
+
+  ;; Encoding a list of strings with encode-fields-to-buffer and decoding with
+  ;; split-on-nul-bytes must recover the original strings.
+  (it "encode-fields-to-buffer-and-split-on-nul-bytes-are-symmetric"
+    (let* ((strings  '("alpha" "beta" "gamma" "delta"))
+           (octets   (mapcar (lambda (s)
+                               (babel:string-to-octets s :encoding :utf-8))
+                             strings))
+           (buf      (cl-tmux/protocol:encode-fields-to-buffer octets))
+           (decoded  (cl-tmux/protocol:split-on-nul-bytes buf)))
+      (expect (equal strings decoded)))))

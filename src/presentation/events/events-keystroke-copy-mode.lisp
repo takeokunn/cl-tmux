@@ -83,7 +83,7 @@
    Numeric prefix digits accumulate via
    %copy-mode-accumulate-digit; once a non-digit byte resolves the count, the
    byte is resolved via %run-copy-mode-key-table-entry.  Returns
-   (values NIL #'%GROUND-INPUT-STATE)."
+   (%GROUND-VALUES) when no new state is entered."
   (let ((screen (%active-screen session)))
     (when screen
       (let ((count (%copy-mode-accumulate-digit byte)))
@@ -94,4 +94,4 @@
               (return-from %dispatch-copy-mode-ground-byte
                 (values nil new-state))))))))
   (setf *dirty* t)
-  (values nil #'%ground-input-state))
+  (%ground-values))

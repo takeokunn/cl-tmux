@@ -61,7 +61,7 @@
   "Return the CPS outcome/state pair for a prefix string-key ENTRY."
   (if (and entry (key-table-repeatable-p entry))
       (values :repeatable #'%after-prefix-input-state)
-      (values nil #'%ground-input-state)))
+      (%ground-values)))
 
 (defun %dispatch-modifier-arrow (session mod-byte final-byte)
   "Handle the modifier+arrow combination inside ESC [ 1 ; MOD FINAL."

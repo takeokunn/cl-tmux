@@ -1,9 +1,13 @@
 (in-package #:cl-tmux/test)
 
 ;;;; Dispatch test suite and shared support macros.
-
-(def-suite dispatch-suite :description "Command dispatch and prefix routing")
-(in-suite dispatch-suite)
+;;;;
+;;;; This file defines no tests of its own — it only provides the shared
+;;;; helper macros used by the dispatch-suite family of test files (some
+;;;; still on the FiveAM-compat shim, some converted to cl-weave).  The
+;;;; `dispatch-suite` symbol itself is auto-vivified by whichever sibling
+;;;; file's `(in-suite dispatch-suite)` runs first, so no `def-suite`/
+;;;; `in-suite` form is needed here.
 
 (defmacro with-copy-mode-active-screen ((session-var screen-var &key feed) &body body)
   "Bind SESSION-VAR and SCREEN-VAR in an active copy-mode session.
@@ -14,34 +18,25 @@
        ,@(when feed `((feed ,screen-var ,feed)))
        ,@body)))
 
-(defmacro with-mocked-respawn-pane ((calls-var reader-calls-var) &body body)
+(defmacro with-mocked-respawn-pane ((respawn-mock-var reader-mock-var) &body body)
   "Execute BODY with cl-tmux/model:respawn-pane and cl-tmux::start-reader-thread
-   replaced by recording stubs.  Restores originals via unwind-protect.
-   CALLS-VAR -- list of (session pane start-dir default-command extra-env) tuples,
-               accumulated in call order (oldest first).
-   READER-CALLS-VAR -- list of pane arguments passed to start-reader-thread,
-                      accumulated in call order (oldest first)."
-  (let ((orig-respawn (gensym "ORIG-RESPAWN"))
-        (orig-reader  (gensym "ORIG-READER")))
-    `(let* ((,calls-var nil)
-            (,reader-calls-var nil)
-            (,orig-respawn (fdefinition 'cl-tmux/model:respawn-pane))
-            (,orig-reader  (fdefinition 'cl-tmux::start-reader-thread)))
-       (unwind-protect
-           (progn
-             (setf (fdefinition 'cl-tmux/model:respawn-pane)
-                   (lambda (session pane &key start-dir default-command extra-env)
-                     (setf ,calls-var
-                           (append ,calls-var
-                                   (list (list session pane start-dir
-                                               default-command extra-env))))
-                     pane))
-             (setf (fdefinition 'cl-tmux::start-reader-thread)
-                   (lambda (pane)
-                     (setf ,reader-calls-var (append ,reader-calls-var (list pane)))))
-             ,@body)
-         (setf (fdefinition 'cl-tmux/model:respawn-pane) ,orig-respawn)
-         (setf (fdefinition 'cl-tmux::start-reader-thread) ,orig-reader)))))
+   replaced by cl-weave mock functions, bound to RESPAWN-MOCK-VAR and
+   READER-MOCK-VAR (originals restored automatically on exit via
+   cl-weave:with-mocked-functions).  Query call history with
+   (mock-calls respawn-mock-var) / (mock-calls reader-mock-var) — each entry
+   is the full argument list as called, e.g. for respawn-pane:
+   (session pane :start-dir \"...\" :default-command \"...\" :extra-env (...))."
+  `(let ((,respawn-mock-var
+          (make-mock-function
+           (lambda (session pane &key start-dir default-command extra-env)
+             (declare (ignore session start-dir default-command extra-env))
+             pane)))
+         (,reader-mock-var
+          (make-mock-function (lambda (pane) (declare (ignore pane))))))
+     (with-mocked-functions
+         (((fdefinition 'cl-tmux/model:respawn-pane) ,respawn-mock-var)
+          ((fdefinition 'cl-tmux::start-reader-thread) ,reader-mock-var))
+       ,@body)))
 
 (defmacro with-stubbed-switch-to-session ((target-var) &body body)
   "Execute BODY with cl-tmux::%switch-to-session replaced by a stub that

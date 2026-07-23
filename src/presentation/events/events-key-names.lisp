@@ -33,9 +33,6 @@
   (+byte-arrow-right+ "Right" :select-pane-right)
   (+byte-arrow-left+  "Left"  :select-pane-left))
 
-(defconstant +byte-csi-mod-shift+ 50
-  "CSI modifier '2' -- Shift key (0x32), as in ESC [ 1 ; 2 A (Shift+Up).")
-
 (defun %modifier-prefix (mod-value)
   "Build the canonical C-/M-/S- modifier prefix for a CSI MOD-VALUE.
    MOD-VALUE is 1 + a bitmask where bit0=Shift, bit1=Alt/Meta, bit2=Ctrl.

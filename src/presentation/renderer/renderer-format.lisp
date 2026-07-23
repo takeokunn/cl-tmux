@@ -171,11 +171,11 @@
 
 (defun cursor-invisible (stream)
   "Emit DECTCEM hide-cursor sequence ESC[?25l to STREAM."
-  (format stream "~C[?25l" +esc+))
+  (write-string (cl-tty-kit:ansi-hide-cursor) stream))
 
 (defun cursor-visible (stream)
   "Emit DECTCEM show-cursor sequence ESC[?25h to STREAM."
-  (format stream "~C[?25h" +esc+))
+  (write-string (cl-tty-kit:ansi-show-cursor) stream))
 
 (defun set-cursor-shape (stream shape)
   "Emit DECSCUSR CSI sequence to set cursor shape in the outer terminal."
@@ -185,4 +185,4 @@
 
 (defun reset-attrs (stream)
   "Emit SGR reset sequence ESC[0m to STREAM, clearing all attributes and colours."
-  (format stream "~C[0m" +esc+))
+  (write-string (cl-tty-kit:ansi-reset-style) stream))

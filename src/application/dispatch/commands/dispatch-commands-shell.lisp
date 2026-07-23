@@ -46,21 +46,24 @@
   "Treat a formatted IF-SHELL result as truthy when it is neither empty nor 0."
   (not (member result '("" "0") :test #'string=)))
 
-(defun %run-shell-background-p (flags)
-  "True when RUN-SHELL was called with the background flag."
-  (%flag-present-p flags #\b))
+(defmacro define-flag-predicates (&rest specs)
+  "Define a boolean %FLAG-PRESENT-P wrapper predicate for each SPEC, a
+   (name flag-char docstring) triple."
+  `(progn
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (name flag-char docstring) spec
+                   `(defun ,name (flags) ,docstring (%flag-present-p flags ,flag-char))))
+               specs)))
 
-(defun %run-shell-tmux-command-p (flags)
-  "True when RUN-SHELL should route COMMAND through tmux instead of the shell."
-  (%flag-present-p flags #\C))
-
-(defun %run-shell-combine-stderr-p (flags)
-  "True when RUN-SHELL should redirect stderr into displayed stdout."
-  (%flag-present-p flags #\E))
-
-(defun %if-shell-format-p (flags)
-  "True when IF-SHELL should expand its condition as a format string."
-  (%flag-present-p flags #\F))
+(define-flag-predicates
+  (%run-shell-background-p #\b
+   "True when RUN-SHELL was called with the background flag.")
+  (%run-shell-tmux-command-p #\C
+   "True when RUN-SHELL should route COMMAND through tmux instead of the shell.")
+  (%run-shell-combine-stderr-p #\E
+   "True when RUN-SHELL should redirect stderr into displayed stdout.")
+  (%if-shell-format-p #\F
+   "True when IF-SHELL should expand its condition as a format string."))
 
 (defun %cmd-if-shell-format-arg (session target-session target-window target-pane
                                   cond-str then-str else-str)

@@ -30,105 +30,89 @@
 ;;; suite here — before this file's first in-suite they would otherwise land
 ;;; in the global suite, which the runner never runs.
 
-(def-suite parser-helper-suite
-  :description "Self-checks for the make-bytes / feed-osc test helpers"
-  :in terminal-suite)
-(in-suite parser-helper-suite)
+(describe "terminal-suite/parser-helper-suite"
 
-(test make-bytes-helper
-  "make-bytes returns a (unsigned-byte 8) vector with the given byte values."
-  (let ((bytes (make-bytes #x1B #x5D #x07)))
-    (is (= 3 (length bytes)) "length must be 3")
-    (is (= #x1B (aref bytes 0)) "first byte must be ESC")
-    (is (= #x5D (aref bytes 1)) "second byte must be ]")
-    (is (= #x07 (aref bytes 2)) "third byte must be BEL")))
+  ;; make-bytes returns a (unsigned-byte 8) vector with the given byte values.
+  (it "make-bytes-helper"
+    (let ((bytes (make-bytes #x1B #x5D #x07)))
+      (expect (= 3 (length bytes)))
+      (expect (= #x1B (aref bytes 0)))
+      (expect (= #x5D (aref bytes 1)))
+      (expect (= #x07 (aref bytes 2)))))
 
-(test feed-osc-helper
-  "feed-osc sends an OSC sequence that causes the expected side-effect."
-  (with-screen (s 20 5)
-    (feed-osc s 0 "test-title")
-    (is (string= "test-title" (cl-tmux/terminal/types:screen-title s))
-        "feed-osc for OSC 0 must set screen-title")))
+  ;; feed-osc sends an OSC sequence that causes the expected side-effect.
+  (it "feed-osc-helper"
+    (with-screen (s 20 5)
+      (feed-osc s 0 "test-title")
+      (expect (string= "test-title" (cl-tmux/terminal/types:screen-title s))))))
 
 ;;; ── Coverage gap: zero-length buffer in screen-process-bytes ─────────────────
 ;;;
 ;;; Audit finding: screen-process-bytes with start=0, end=0 on a zero-length
 ;;; buffer was not tested.
 
-(def-suite parser-suite
-  :description "Parser and emulator coverage gap tests"
-  :in terminal-suite)
-(in-suite parser-suite)
+(describe "terminal-suite/parser-suite"
 
-(test screen-process-bytes-zero-length-buffer-is-noop
-  "screen-process-bytes on a zero-length buffer (start=end=0) is a no-op."
-  (with-screen (s 10 5)
-    (let ((buf (make-array 0 :element-type '(unsigned-byte 8))))
-      (screen-process-bytes s buf :start 0 :end 0))
-    (is (char= #\Space (char-at s 0 0))
-        "zero-length buffer must leave screen unchanged")))
+  ;; screen-process-bytes on a zero-length buffer (start=end=0) is a no-op.
+  (it "screen-process-bytes-zero-length-buffer-is-noop"
+    (with-screen (s 10 5)
+      (let ((buf (make-array 0 :element-type '(unsigned-byte 8))))
+        (screen-process-bytes s buf :start 0 :end 0))
+      (expect (char= #\Space (char-at s 0 0))))))
 
 ;;; ── Coverage gap: %base64-decode edge cases ──────────────────────────────────
 ;;;
 ;;; Audit finding: Base64 padding ('='), truncated input, and invalid characters
 ;;; were not directly asserted.
 
-(def-suite base64-decode-suite
-  :description "Direct coverage of %base64-decode edge cases"
-  :in terminal-suite)
-(in-suite base64-decode-suite)
+(describe "terminal-suite/base64-decode-suite"
 
-(test base64-decode-basic-string
-  "%base64-decode decodes a standard Base64 string ('hello' = aGVsbG8=)."
-  (let ((result (cl-tmux/terminal/parser::%base64-decode "aGVsbG8=")))
-    (is (not (null result)) "must return a byte vector, not NIL")
-    (is (string= "hello"
-                 (babel:octets-to-string result :encoding :utf-8))
-        "aGVsbG8= must decode to 'hello'")))
+  ;; %base64-decode decodes a standard Base64 string ('hello' = aGVsbG8=).
+  (it "base64-decode-basic-string"
+    (let ((result (cl-tmux/terminal/parser::%base64-decode "aGVsbG8=")))
+      (expect (not (null result)))
+      (expect (string= "hello"
+                       (babel:octets-to-string result :encoding :utf-8)))))
 
-(test base64-decode-empty-string
-  "%base64-decode on an empty string returns an empty byte vector."
-  (let ((result (cl-tmux/terminal/parser::%base64-decode "")))
-    (is (or (null result) (zerop (length result)))
-        "empty input must produce empty output or NIL")))
+  ;; %base64-decode on an empty string returns an empty byte vector.
+  (it "base64-decode-empty-string"
+    (let ((result (cl-tmux/terminal/parser::%base64-decode "")))
+      (expect (or (null result) (zerop (length result))))))
 
-(test base64-decode-truncated-group
-  "%base64-decode on input shorter than 4 chars does not crash."
-  (finishes (cl-tmux/terminal/parser::%base64-decode "YQ"))
-  ;; 'YQ' decodes to 'a' (no padding); should succeed without error.
-  (let ((result (cl-tmux/terminal/parser::%base64-decode "YQ==")))
-    (is (not (null result)) "padded 2-char group must decode successfully")))
+  ;; %base64-decode on input shorter than 4 chars does not crash.
+  (it "base64-decode-truncated-group"
+    (finishes (cl-tmux/terminal/parser::%base64-decode "YQ"))
+    ;; 'YQ' decodes to 'a' (no padding); should succeed without error.
+    (let ((result (cl-tmux/terminal/parser::%base64-decode "YQ==")))
+      (expect (not (null result)))))
 
-;;; ── Coverage gap: %parse-osc-command error branch ────────────────────────────
-;;;
-;;; Audit finding: the error-return branch (non-integer command field) was not
-;;; directly asserted.
+  ;;; ── Coverage gap: %parse-osc-command error branch ────────────────────────────
+  ;;;
+  ;;; Audit finding: the error-return branch (non-integer command field) was not
+  ;;; directly asserted.
 
-(test parse-osc-command-returns-nil-for-non-integer
-  "%parse-osc-command returns NIL when the command field is not a valid integer."
-  (let ((result (cl-tmux/terminal/parser::%parse-osc-command "notanumber" 10)))
-    (is (null result)
-        "%parse-osc-command must return NIL for a non-integer command field")))
+  ;; %parse-osc-command returns NIL when the command field is not a valid integer.
+  (it "parse-osc-command-returns-nil-for-non-integer"
+    (let ((result (cl-tmux/terminal/parser::%parse-osc-command "notanumber" 10)))
+      (expect (null result))))
 
-(test parse-osc-command-returns-integer-for-valid-input
-  "%parse-osc-command returns the integer for a valid command field."
-  (let ((result (cl-tmux/terminal/parser::%parse-osc-command "52;data" 2)))
-    (is (= 52 result)
-        "%parse-osc-command must return 52 for '52' prefix")))
+  ;; %parse-osc-command returns the integer for a valid command field.
+  (it "parse-osc-command-returns-integer-for-valid-input"
+    (let ((result (cl-tmux/terminal/parser::%parse-osc-command "52;data" 2)))
+      (expect (= 52 result))))
 
-;;; ── Coverage gap: %handle-osc-52 no-inner-semicolon branch ──────────────────
-;;;
-;;; Audit finding: the branch where the OSC 52 body has no semicolon was not
-;;; directly tested.
+  ;;; ── Coverage gap: %handle-osc-52 no-inner-semicolon branch ──────────────────
+  ;;;
+  ;;; Audit finding: the branch where the OSC 52 body has no semicolon was not
+  ;;; directly tested.
 
-(test handle-osc-52-no-inner-semicolon-is-noop
-  "%handle-osc-52 is a no-op when the body has no semicolon (malformed OSC 52)."
-  (let* ((received :not-called)
-         (cl-tmux/terminal/parser:*osc52-handler*
-           (lambda (text) (setf received text))))
-    (finishes (cl-tmux/terminal/parser::%handle-osc-52 "nodatahere"))
-    (is (eq :not-called received)
-        "%handle-osc-52 with no semicolon must not invoke the handler")))
+  ;; %handle-osc-52 is a no-op when the body has no semicolon (malformed OSC 52).
+  (it "handle-osc-52-no-inner-semicolon-is-noop"
+    (let* ((received :not-called)
+           (cl-tmux/terminal/parser:*osc52-handler*
+             (lambda (text) (setf received text))))
+      (finishes (cl-tmux/terminal/parser::%handle-osc-52 "nodatahere"))
+      (expect (eq :not-called received)))))
 
 ;;; ── CSI colon sub-parameters (ISO 8613-6) ───────────────────────────────────
 ;;;
@@ -136,35 +120,30 @@
 ;;; 38:2::R:G:B true-colour).  The parser keeps the leading value and skips the
 ;;; rest, so such a sequence neither aborts (printing stray bytes) nor mis-applies.
 
-(def-suite csi-colon-subparams :description "CSI colon sub-parameter handling"
-  :in parser-suite)
-(in-suite csi-colon-subparams)
+(describe "parser-suite/csi-colon-subparams"
 
-(test csi-colon-undercurl-keeps-leading-underline
-  "CSI 4:3 m (undercurl) keeps the leading 4 -> underline; no stray bytes print."
-  (with-screen (s 8 2)
-    (feed s (esc "[4:3m"))            ; undercurl via colon sub-parameter
-    (feed s "X")
-    (is (char= #\X (char-at s 0 0))
-        "X must be the first cell - the colon sequence printed nothing")
-    (is (logbitp 3 (attrs-at s 0 0))
-        "the leading 4 must set the underline attribute (bit 3)")))
+  ;; CSI 4:3 m (undercurl) keeps the leading 4 -> underline; no stray bytes print.
+  (it "csi-colon-undercurl-keeps-leading-underline"
+    (with-screen (s 8 2)
+      (feed s (esc "[4:3m"))            ; undercurl via colon sub-parameter
+      (feed s "X")
+      (expect (char= #\X (char-at s 0 0)))
+      (expect (logbitp 3 (attrs-at s 0 0)))))
 
-(test csi-colon-multi-param-mixed
-  "CSI 0;4:3;1 m applies reset, underline (from 4:3), bold - colon does not
-   bleed into the neighbouring parameters."
-  (with-screen (s 8 2)
-    (feed s (esc "[0;4:3;1m"))
-    (feed s "Y")
-    (is (char= #\Y (char-at s 0 0)) "Y is the first cell")
-    (is (logbitp 3 (attrs-at s 0 0)) "underline set (from 4:3)")
-    (is (logbitp 0 (attrs-at s 0 0)) "bold set (from the trailing ;1)")))
+  ;; CSI 0;4:3;1 m applies reset, underline (from 4:3), bold - colon does not
+  ;; bleed into the neighbouring parameters.
+  (it "csi-colon-multi-param-mixed"
+    (with-screen (s 8 2)
+      (feed s (esc "[0;4:3;1m"))
+      (feed s "Y")
+      (expect (char= #\Y (char-at s 0 0)))
+      (expect (logbitp 3 (attrs-at s 0 0)))
+      (expect (logbitp 0 (attrs-at s 0 0)))))
 
-(test csi-colon-truecolor-form-does-not-abort
-  "CSI 38:2::255:0:0 m (colon true-colour) must not abort and spew bytes; the
-   following text writes cleanly at column 0."
-  (with-screen (s 8 2)
-    (feed s (esc "[38:2::255:0:0m"))
-    (feed s "Z")
-    (is (char= #\Z (char-at s 0 0))
-        "Z must be the first cell - no stray sub-parameter bytes printed")))
+  ;; CSI 38:2::255:0:0 m (colon true-colour) must not abort and spew bytes; the
+  ;; following text writes cleanly at column 0.
+  (it "csi-colon-truecolor-form-does-not-abort"
+    (with-screen (s 8 2)
+      (feed s (esc "[38:2::255:0:0m"))
+      (feed s "Z")
+      (expect (char= #\Z (char-at s 0 0))))))

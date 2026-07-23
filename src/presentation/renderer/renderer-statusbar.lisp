@@ -6,18 +6,9 @@
 ;;;; logic, and the render-status-bar entry point.  It has no knowledge of
 ;;;; session-frame compositing; that lives in renderer-compose.lisp.
 ;;;;
-;;;; Load order: renderer-format → renderer-style → renderer-pane
-;;;;             → renderer-overlay → renderer-statusbar
-;;;;             → renderer-compose
-
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (let* ((source (or *load-truename* *compile-file-truename*))
-         (base (and source
-                    (make-pathname :name nil :type nil :defaults source))))
-    (dolist (name '("renderer-statusbar-layout.lisp"))
-      (let ((path (and base (merge-pathnames name base))))
-        (when (and path (probe-file path))
-          (load path))))))
+;;;; Load order (declared in cl-tmux.asd): renderer-format → renderer-style
+;;;;             → renderer-statusbar-layout → renderer-pane → renderer-overlay
+;;;;             → renderer-statusbar → renderer-compose
 
 ;;; ── Alert-priority style table ─────────────────────────────────────────────
 ;;;

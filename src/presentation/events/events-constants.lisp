@@ -24,17 +24,14 @@
 (defconstant +byte-w+          119  "Lowercase 'w' — vi word-forward (0x77)")
 (defconstant +byte-b+           98  "Lowercase 'b' — vi word-backward (0x62)")
 (defconstant +byte-e+          101  "Lowercase 'e' — vi word-end (0x65)")
-(defconstant +byte-f+          102  "Lowercase 'f' — vi jump-forward-to-char (0x66)")
 (defconstant +byte-g+          103  "Lowercase 'g' — vi jump-to-top (0x67)")
 (defconstant +byte-i+          105  "Lowercase 'i' — exit copy mode (insert, 0x69)")
 (defconstant +byte-n+          110  "Lowercase 'n' — search next (0x6E)")
 (defconstant +byte-r+          114  "Lowercase 'r' — rectangle select toggle (0x72)")
-(defconstant +byte-t+          116  "Lowercase 't' — vi jump-to-before-char (0x74)")
 (defconstant +byte-v+          118  "Lowercase 'v' — begin selection (0x76)")
 (defconstant +byte-y+          121  "Lowercase 'y' — yank/copy (0x79)")
 (defconstant +byte-capital-a+   65  "Uppercase 'A' — append selection (0x41)")
 (defconstant +byte-capital-d+   68  "Uppercase 'D' — copy to end of line (0x44)")
-(defconstant +byte-capital-f+   70  "Uppercase 'F' — vi jump-backward-to-char (0x46)")
 (defconstant +byte-capital-g+   71  "Uppercase 'G' — jump to bottom (0x47)")
 (defconstant +byte-capital-h+   72  "Uppercase 'H' — cursor to top of screen (0x48)")
 (defconstant +byte-capital-l+   76  "Uppercase 'L' — cursor to bottom of screen (0x4C)")
@@ -44,8 +41,6 @@
 (defconstant +byte-capital-v+   86  "Uppercase 'V' — begin line selection (0x56)")
 (defconstant +byte-capital-y+   89  "Uppercase 'Y' — copy current line (0x59)")
 (defconstant +byte-dollar+      36  "Dollar sign '$' — go to line end (0x24)")
-(defconstant +byte-slash+       47  "Slash '/' — search forward (0x2F)")
-(defconstant +byte-question+    63  "Question mark '?' — search backward (0x3F)")
 (defconstant +byte-space+       32  "Space ' ' — begin selection (0x20)")
 
 ;;; ── CSI modifier-sequence byte constants ────────────────────────────────────
@@ -115,26 +110,8 @@
    the corresponding uppercase ASCII letter or symbol.  Named to replace the
    opaque '+64' literal in %control-byte-key-name.")
 
-;;; ── Copy-mode uppercase / control constants ──────────────────────────────────
-;;; Raw byte values for uppercase letters and Ctrl codes used in the copy-mode
-;;; dispatch table that previously lacked named constants (the table used bare integers).
-(defconstant +byte-capital-j+   74 "Uppercase 'J' — scroll viewport down one line (0x4A).")
-(defconstant +byte-capital-k+   75 "Uppercase 'K' — scroll viewport up one line (0x4B).")
-(defconstant +byte-capital-w+   87 "Uppercase 'W' — WORD-forward whitespace-delimited (0x57).")
-(defconstant +byte-capital-b+   66
-  "Uppercase 'B' — WORD-backward whitespace-delimited (0x42).
-   NOTE: shares numeric value 66 with +byte-arrow-down+.  They are semantically disjoint:
-   arrow-down is the final byte of a CSI sequence and never appears as a raw byte in
-   single-byte copy-mode dispatch.")
-(defconstant +byte-capital-e+   69 "Uppercase 'E' — WORD-end whitespace-delimited (0x45).")
+;;; ── Copy-mode navigation constants ───────────────────────────────────────────
 (defconstant +byte-caret+       94 "Caret '^' — back-to-indentation in copy mode (0x5E).")
-(defconstant +byte-lowercase-z+ 122 "Lowercase 'z' — scroll-middle in copy mode (0x7A).")
-(defconstant +byte-ctrl-v+      22 "C-v — toggle rectangle select in copy mode (0x16).")
-(defconstant +byte-hash+        35 "Hash '#' — search backward for word under cursor (0x23).")
-(defconstant +byte-asterisk+    42 "Asterisk '*' — search forward for word under cursor (0x2A).")
-(defconstant +byte-ctrl-s+      19 "C-s — incremental forward search in copy mode (0x13).")
-(defconstant +byte-ctrl-r+      18 "C-r — incremental backward search in copy mode (0x12).")
-(defconstant +byte-ctrl-j+      10 "C-j — newline / accept (equivalent to Enter in copy mode) (0x0A).")
 
 ;;; ── Prompt-editing control-byte constants ───────────────────────────────────
 ;;; Named for every raw byte used in the prompt key-dispatch tables

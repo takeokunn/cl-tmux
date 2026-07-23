@@ -11,6 +11,11 @@
 ;;;;     conflict/5           same key, two tables, different commands
 ;;;;     shadows-root/2       a non-root binding whose key is also bound in root
 ;;;;     repeatable-command/1 a command reachable through a repeatable binding
+;;;;     unique-binding/2     a non-root binding whose key is NOT also in root
+;;;;                          (negation-as-failure — the logical inverse of
+;;;;                          shadows-root/2, not merely its set-complement:
+;;;;                          it re-derives independently via \+ rather than
+;;;;                          filtering shadows-root's results)
 ;;;;
 ;;;; TABLE is a table-name string, KEY is a character or key-name string, and
 ;;;; COMMAND is whatever the store holds: a keyword (`:new-window'), or a
@@ -46,7 +51,14 @@ raise an existence error instead of resolving to the engine's builtin."
      (cl-prolog:make-clause
       '(repeatable-command ?command)
       (list '(binding ?table ?key ?command)
-            '(repeatable ?table ?key))))))
+            '(repeatable ?table ?key)))
+     ;; A non-root binding is unique when its key does NOT also appear in root —
+     ;; negation-as-failure, the logical inverse of shadows-root/2.
+     (cl-prolog:make-clause
+      (list 'unique-binding '?table '?key)
+      (list '(binding ?table ?key ?command)
+            (list '|\\=| '?table root)
+            (list '|\\+| (list 'binding root '?key '?ignored)))))))
 
 (defun %fact-clauses (facts)
   "Translate FACTS (a list of binding plists) into fact clauses."
@@ -74,6 +86,18 @@ is an ordinary rulebase; query it with the helpers below or with any
 ;;; never touch the engine's binding alists.  COMMAND values may be keywords,
 ;;; strings, or command lists, so dedup/sort use `equal' and a printed key.
 
+(defun %findall (rulebase template goal)
+  "Return the FINDALL/3 solutions for TEMPLATE over GOAL against RULEBASE, as
+   a raw Lisp list (possibly with duplicates in generation order — FINDALL
+   does not sort or dedup internally, unlike SETOF/3, so this is safe for
+   this domain's raw Lisp STRINGP terms; see the package docstring's SETOF
+   revert note). Callers apply their own dedup/sort afterward, since what
+   counts as \"the same\" or \"in order\" is a presentation choice, not part
+   of the logical query."
+  (multiple-value-bind (solution found-p)
+      (cl-prolog:query-prolog-first rulebase (list 'findall template goal '?bag))
+    (when found-p (cl-prolog:solution-binding '?bag solution))))
+
 (defun key-command (rulebase table key)
   "Return (values COMMAND FOUND-P) for KEY in TABLE, or (values NIL NIL)."
   (cl-prolog:with-prolog-query (?command)
@@ -81,22 +105,30 @@ is an ordinary rulebase; query it with the helpers below or with any
     (return-from key-command (values ?command t)))
   (values nil nil))
 
+(defun %findall-pairs (rulebase goal)
+  "Return (A . B) conses from FINDALL-ing (list '?table '?key) over GOAL,
+   which must use exactly those two variable names."
+  (mapcar (lambda (pair) (cons (first pair) (second pair)))
+          (%findall rulebase (list '?table '?key) goal)))
+
 (defun keys-running (rulebase command)
   "Return a list of (TABLE . KEY) conses whose binding runs COMMAND."
-  (let ((out '()))
-    (dolist (solution (cl-prolog:query-prolog
-                       rulebase (list 'binding '?table '?key command))
-                      (nreverse out))
-      (push (cons (cl-prolog:solution-binding '?table solution)
-                  (cl-prolog:solution-binding '?key solution))
-            out))))
+  (%findall-pairs rulebase (list 'binding '?table '?key command)))
 
 (defun repeatable-commands (rulebase)
-  "Return the distinct commands reachable through a repeatable binding."
-  (let ((out '()))
-    (dolist (solution (cl-prolog:query-prolog rulebase '(repeatable-command ?command)))
-      (pushnew (cl-prolog:solution-binding '?command solution) out :test #'equal))
-    (sort out #'string< :key #'prin1-to-string)))
+  "Return the distinct commands reachable through a repeatable binding.
+
+Uses FINDALL/3 (via %FINDALL) rather than cl-prolog's SETOF/3: this domain's
+COMMAND values are frequently raw Lisp strings (parsed command lists start
+with a string, e.g. (\"resize-pane\" \"-L\" \"5\")), and cl-prolog's
+standard-order-of-terms comparator does not have a case for STRINGP — SETOF
+signals \"Not a Prolog term\" as soon as it needs to order two distinct
+string-bearing solutions. Verified experimentally; see
+[[cl-tmux-fiveam-shim-removal]] memory notes for the failure mode. FINDALL
+does not sort/dedup internally, so both are explicit Lisp-level steps here."
+  (sort (remove-duplicates (%findall rulebase '?command '(repeatable-command ?command))
+                           :test #'equal :from-end t)
+        #'string< :key #'prin1-to-string))
 
 (defun binding-conflicts (rulebase)
   "Return the distinct key conflicts as a list of plists.
@@ -129,9 +161,12 @@ canonicalized so the symmetric (t1/t2) solutions collapse to one row."
 
 (defun shadowing-bindings (rulebase)
   "Return (TABLE . KEY) conses for non-root bindings whose key is also in root."
-  (let ((out '()))
-    (dolist (solution (cl-prolog:query-prolog rulebase '(shadows-root ?table ?key))
-                      (nreverse out))
-      (pushnew (cons (cl-prolog:solution-binding '?table solution)
-                     (cl-prolog:solution-binding '?key solution))
-               out :test #'equal))))
+  (remove-duplicates (%findall-pairs rulebase '(shadows-root ?table ?key))
+                     :test #'equal :from-end t))
+
+(defun unique-bindings (rulebase)
+  "Return (TABLE . KEY) conses for non-root bindings whose key is NOT also in
+   root — the complement of SHADOWING-BINDINGS, derived independently via
+   cl-prolog's negation-as-failure (\\+) rather than filtering that result."
+  (remove-duplicates (%findall-pairs rulebase '(unique-binding ?table ?key))
+                     :test #'equal :from-end t))

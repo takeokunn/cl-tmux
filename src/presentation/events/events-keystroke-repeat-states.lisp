@@ -22,7 +22,7 @@
     (setf *dirty* t)
     (if (key-table-repeatable-p entry)
         (values :repeatable #'%after-root-repeat-input-state)
-        (values nil #'%ground-input-state))))
+        (%ground-values))))
 
 (define-cps-state %after-root-repeat-input-state (session byte)
   ((%key-table-entry-by-candidates +table-root+ (%single-byte-key-candidates byte))

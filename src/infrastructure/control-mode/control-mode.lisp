@@ -24,17 +24,24 @@
   "Format a `%VERB TIME NUMBER FLAGS` control line (the shape of %begin/%end/%error)."
   (format nil "%~A ~D ~D ~D" verb time number flags))
 
-(defun control-begin (number &key (time 0) (flags 1))
-  "The %begin line that opens a command reply block for command NUMBER."
-  (%control-line "begin" time number flags))
+(defmacro define-control-line-commands (&rest specs)
+  "Define a %CONTROL-LINE wrapper function for each SPEC, a
+   (function-name line-verb docstring) triple."
+  `(progn
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (name line-verb docstring) spec
+                   `(defun ,name (number &key (time 0) (flags 1))
+                      ,docstring
+                      (%control-line ,line-verb time number flags))))
+               specs)))
 
-(defun control-end (number &key (time 0) (flags 1))
-  "The %end line that closes a successful command reply block."
-  (%control-line "end" time number flags))
-
-(defun control-error (number &key (time 0) (flags 1))
-  "The %error line that closes a FAILED command reply block."
-  (%control-line "error" time number flags))
+(define-control-line-commands
+  (control-begin "begin"
+   "The %begin line that opens a command reply block for command NUMBER.")
+  (control-end "end"
+   "The %end line that closes a successful command reply block.")
+  (control-error "error"
+   "The %error line that closes a FAILED command reply block."))
 
 (defun control-format-reply (number output &key (success t) (time 0) (flags 1))
   "Frame OUTPUT (a possibly-multi-line command result string) as a control-mode

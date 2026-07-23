@@ -6,18 +6,26 @@
 ;;;; questions about it that the imperative store cannot express directly
 ;;;; (reverse lookup, cross-table conflicts, repeatable-command inference).
 ;;;;
-;;;; It deliberately lives in its own ASDF system (`cl-tmux/reasoning',
-;;;; depending on `cl-tmux' + `cl-prolog') so the core binary and its
-;;;; FiveAM suite carry no new dependency.  The core is untouched.
+;;;; It lives in its own `reasoning' module within the core `cl-tmux' ASDF
+;;;; system (cl-prolog is a core dependency; see src/reasoning/'s module
+;;;; comment in cl-tmux.asd), loaded after `application/config' so it can
+;;;; reference cl-tmux/config's public helpers directly.
 ;;;;
-;;;; Only `\=' is imported from cl-prolog: builtin goals dispatch on symbol
-;;;; identity, so inequality goals in clause data must reference the engine's
-;;;; own symbol, whereas the domain predicates below are ordinary symbols
-;;;; owned by this package.
+;;;; `\=', `\+', and `findall' are imported from cl-prolog: builtin goals
+;;;; dispatch on symbol identity, so inequality/negation/collection goals in
+;;;; clause data must reference the engine's own symbols, whereas the domain
+;;;; predicates below are ordinary symbols owned by this package.
+;;;; (cl-prolog's SETOF/3 was tried here and reverted — see the note above
+;;;; REPEATABLE-COMMANDS in key-rulebase.lisp: its term-ordering comparator
+;;;; can't sort raw Lisp strings, which this domain's command/table names
+;;;; are built from. FINDALL/3 does not sort or dedupe internally, so it has
+;;;; no such limitation — %FINDALL below is the shared query helper built on
+;;;; it.)
 
 (defpackage #:cl-tmux/reasoning
   (:use #:cl)
-  (:import-from #:cl-prolog #:|\\=|)
+  (:import-from #:cl-prolog #:|\\=| #:|\\+| #:findall)
+  (:import-from #:cl-tmux/config #:key-display-string)
   (:documentation
    "A cl-prolog read-model over cl-tmux key tables: projection, a small
     rule set, and query helpers for binding introspection.")
@@ -32,6 +40,7 @@
    #:repeatable-commands
    #:binding-conflicts
    #:shadowing-bindings
+   #:unique-bindings
    #:explain-binding
    ;; Command-metadata read-model (second cold-path domain)
    #:build-command-rulebase
@@ -49,8 +58,8 @@
    #:conflict
    #:shadows-root
    #:repeatable-command
+   #:unique-binding
    #:command
    #:usage
    #:accepts-flag
-   #:scriptable
-   #:flag-shared))
+   #:scriptable))

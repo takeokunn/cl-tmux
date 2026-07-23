@@ -7,125 +7,103 @@
 
 ;;; ── SUITE: screen-wrapped-rows and %mark-line-wrapped / %line-wrapped-p ──────
 
-(def-suite wrapped-rows-slot-suite
-  :description "screen-wrapped-rows: NIL default, lazy allocation, mark/query primitives"
-  :in terminal-suite)
-(in-suite wrapped-rows-slot-suite)
+(describe "terminal-suite/wrapped-rows-slot-suite"
 
-(test screen-wrapped-rows-slot-defaults-nil
-  "screen-wrapped-rows is NIL on a fresh screen."
-  (with-screen (s 10 5)
-    (is (null (cl-tmux/terminal/types:screen-wrapped-rows s))
-        "wrapped-rows must be NIL initially")))
+  ;; screen-wrapped-rows is NIL on a fresh screen.
+  (it "screen-wrapped-rows-slot-defaults-nil"
+    (with-screen (s 10 5)
+      (expect (null (cl-tmux/terminal/types:screen-wrapped-rows s)))))
 
-(test screen-wrapped-rows-lazily-allocated-on-first-mark
-  "After %mark-line-wrapped, screen-wrapped-rows holds a hash-table."
-  (with-screen (s 10 5)
-    (cl-tmux/terminal/types:%mark-line-wrapped s 0)
-    (let ((table (cl-tmux/terminal/types:screen-wrapped-rows s)))
-      (is (hash-table-p table)
-          "wrapped-rows must be a hash-table after first mark"))))
+  ;; After %mark-line-wrapped, screen-wrapped-rows holds a hash-table.
+  (it "screen-wrapped-rows-lazily-allocated-on-first-mark"
+    (with-screen (s 10 5)
+      (cl-tmux/terminal/types:%mark-line-wrapped s 0)
+      (let ((table (cl-tmux/terminal/types:screen-wrapped-rows s)))
+        (expect (hash-table-p table))))))
 
-(def-suite mark-line-wrapped-suite
-  :description "%mark-line-wrapped and %line-wrapped-p: set, query, absent"
-  :in terminal-suite)
-(in-suite mark-line-wrapped-suite)
+(describe "terminal-suite/mark-line-wrapped-suite"
 
-(test mark-line-wrapped-marks-specified-row
-  "%mark-line-wrapped sets the flag for the requested row."
-  (with-screen (s 10 5)
-    (cl-tmux/terminal/types:%mark-line-wrapped s 2)
-    (is-true (cl-tmux/terminal/types:%line-wrapped-p s 2)
-             "row 2 must be marked wrapped after %mark-line-wrapped")))
+  ;; %mark-line-wrapped sets the flag for the requested row.
+  (it "mark-line-wrapped-marks-specified-row"
+    (with-screen (s 10 5)
+      (cl-tmux/terminal/types:%mark-line-wrapped s 2)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 2) :to-be-truthy)))
 
-(test line-wrapped-p-returns-false-for-unmarked-row
-  "%line-wrapped-p returns NIL for a row that was never marked."
-  (with-screen (s 10 5)
-    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 0)
-              "row 0 must not be wrapped on a fresh screen")))
+  ;; %line-wrapped-p returns NIL for a row that was never marked.
+  (it "line-wrapped-p-returns-false-for-unmarked-row"
+    (with-screen (s 10 5)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 0) :to-be-falsy)))
 
-(test mark-line-wrapped-only-marks-specified-row
-  "%mark-line-wrapped does not affect adjacent rows."
-  (with-screen (s 10 5)
-    (cl-tmux/terminal/types:%mark-line-wrapped s 1)
-    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 0) "row 0 must remain unmarked")
-    (is-true  (cl-tmux/terminal/types:%line-wrapped-p s 1) "row 1 must be marked")
-    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 2) "row 2 must remain unmarked")))
+  ;; %mark-line-wrapped does not affect adjacent rows.
+  (it "mark-line-wrapped-only-marks-specified-row"
+    (with-screen (s 10 5)
+      (cl-tmux/terminal/types:%mark-line-wrapped s 1)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 0) :to-be-falsy)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 1) :to-be-truthy)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 2) :to-be-falsy)))
 
-(test mark-line-wrapped-multiple-rows
-  "%mark-line-wrapped can mark multiple distinct rows independently."
-  (with-screen (s 10 5)
-    (cl-tmux/terminal/types:%mark-line-wrapped s 0)
-    (cl-tmux/terminal/types:%mark-line-wrapped s 3)
-    (is-true  (cl-tmux/terminal/types:%line-wrapped-p s 0) "row 0 must be marked")
-    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 1) "row 1 must be unmarked")
-    (is-true  (cl-tmux/terminal/types:%line-wrapped-p s 3) "row 3 must be marked")))
+  ;; %mark-line-wrapped can mark multiple distinct rows independently.
+  (it "mark-line-wrapped-multiple-rows"
+    (with-screen (s 10 5)
+      (cl-tmux/terminal/types:%mark-line-wrapped s 0)
+      (cl-tmux/terminal/types:%mark-line-wrapped s 3)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 0) :to-be-truthy)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 1) :to-be-falsy)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 3) :to-be-truthy))))
 
 ;;; ── SUITE: %clear-all-line-wrapped ──────────────────────────────────────────
 
-(def-suite clear-all-line-wrapped-suite
-  :description "%clear-all-line-wrapped: clears all marks atomically"
-  :in terminal-suite)
-(in-suite clear-all-line-wrapped-suite)
+(describe "terminal-suite/clear-all-line-wrapped-suite"
 
-(test clear-all-line-wrapped-removes-all-flags
-  "%clear-all-line-wrapped makes every row report unwrapped."
-  (with-screen (s 10 5)
-    (cl-tmux/terminal/types:%mark-line-wrapped s 0)
-    (cl-tmux/terminal/types:%mark-line-wrapped s 1)
-    (cl-tmux/terminal/types:%mark-line-wrapped s 4)
-    (cl-tmux/terminal/types:%clear-all-line-wrapped s)
-    (dotimes (y 5)
-      (is-false (cl-tmux/terminal/types:%line-wrapped-p s y)
-                "row ~D must be unwrapped after %clear-all-line-wrapped" y))))
+  ;; %clear-all-line-wrapped makes every row report unwrapped.
+  (it "clear-all-line-wrapped-removes-all-flags"
+    (with-screen (s 10 5)
+      (cl-tmux/terminal/types:%mark-line-wrapped s 0)
+      (cl-tmux/terminal/types:%mark-line-wrapped s 1)
+      (cl-tmux/terminal/types:%mark-line-wrapped s 4)
+      (cl-tmux/terminal/types:%clear-all-line-wrapped s)
+      (dotimes (y 5)
+        (expect (cl-tmux/terminal/types:%line-wrapped-p s y) :to-be-falsy))))
 
-(test clear-all-line-wrapped-on-fresh-screen-is-noop
-  "%clear-all-line-wrapped on a screen with no wrap table is a no-op."
-  (with-screen (s 10 5)
-    (is (null (cl-tmux/terminal/types:screen-wrapped-rows s))
-        "pre-condition: no wrap table")
-    (finishes (cl-tmux/terminal/types:%clear-all-line-wrapped s))
-    (is (null (cl-tmux/terminal/types:screen-wrapped-rows s))
-        "wrapped-rows must still be NIL after clear-all on fresh screen")))
+  ;; %clear-all-line-wrapped on a screen with no wrap table is a no-op.
+  (it "clear-all-line-wrapped-on-fresh-screen-is-noop"
+    (with-screen (s 10 5)
+      (expect (null (cl-tmux/terminal/types:screen-wrapped-rows s)))
+      (finishes (cl-tmux/terminal/types:%clear-all-line-wrapped s))
+      (expect (null (cl-tmux/terminal/types:screen-wrapped-rows s))))))
 
 ;;; ── SUITE: %shift-line-wrapped-up ────────────────────────────────────────────
 
-(def-suite shift-line-wrapped-up-suite
-  :description "%shift-line-wrapped-up: region shift preserves outside-region flags"
-  :in terminal-suite)
-(in-suite shift-line-wrapped-up-suite)
+(describe "terminal-suite/shift-line-wrapped-up-suite"
 
-(test shift-line-wrapped-up-moves-flags-in-region
-  "%shift-line-wrapped-up: a flag at Y in (top,bottom] moves to Y-1."
-  (with-screen (s 10 6)
-    (cl-tmux/terminal/types:%mark-line-wrapped s 2)
-    (cl-tmux/terminal/types:%mark-line-wrapped s 3)
-    (cl-tmux/terminal/types:%mark-line-wrapped s 4)
-    (cl-tmux/terminal/types:%shift-line-wrapped-up s 1 5)
-    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 0) "row 0 (above region) untouched")
-    (is-true  (cl-tmux/terminal/types:%line-wrapped-p s 1) "row 1 gets flag from row 2")
-    (is-true  (cl-tmux/terminal/types:%line-wrapped-p s 2) "row 2 gets flag from row 3")
-    (is-true  (cl-tmux/terminal/types:%line-wrapped-p s 3) "row 3 gets flag from row 4")
-    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 4) "row 4: no source (row 5 unmarked)")
-    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 5) "row 5: bottom cleared")))
+  ;; %shift-line-wrapped-up: a flag at Y in (top,bottom] moves to Y-1.
+  (it "shift-line-wrapped-up-moves-flags-in-region"
+    (with-screen (s 10 6)
+      (cl-tmux/terminal/types:%mark-line-wrapped s 2)
+      (cl-tmux/terminal/types:%mark-line-wrapped s 3)
+      (cl-tmux/terminal/types:%mark-line-wrapped s 4)
+      (cl-tmux/terminal/types:%shift-line-wrapped-up s 1 5)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 0) :to-be-falsy)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 1) :to-be-truthy)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 2) :to-be-truthy)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 3) :to-be-truthy)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 4) :to-be-falsy)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 5) :to-be-falsy)))
 
-(test shift-line-wrapped-up-preserves-outside-region
-  "%shift-line-wrapped-up does not disturb rows outside [top, bottom]."
-  (with-screen (s 10 8)
-    (cl-tmux/terminal/types:%mark-line-wrapped s 0)
-    (cl-tmux/terminal/types:%mark-line-wrapped s 6)
-    (cl-tmux/terminal/types:%shift-line-wrapped-up s 2 5)
-    (is-true (cl-tmux/terminal/types:%line-wrapped-p s 0)
-             "row 0 (above region) must remain marked")
-    (is-true (cl-tmux/terminal/types:%line-wrapped-p s 6)
-             "row 6 (below region) must remain marked")))
+  ;; %shift-line-wrapped-up does not disturb rows outside [top, bottom].
+  (it "shift-line-wrapped-up-preserves-outside-region"
+    (with-screen (s 10 8)
+      (cl-tmux/terminal/types:%mark-line-wrapped s 0)
+      (cl-tmux/terminal/types:%mark-line-wrapped s 6)
+      (cl-tmux/terminal/types:%shift-line-wrapped-up s 2 5)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 0) :to-be-truthy)
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 6) :to-be-truthy)))
 
-(test shift-line-wrapped-up-noop-when-no-table
-  "%shift-line-wrapped-up on a fresh screen (no hash-table) is a no-op."
-  (with-screen (s 10 5)
-    (finishes (cl-tmux/terminal/types:%shift-line-wrapped-up s 0 4))
-    (is-false (cl-tmux/terminal/types:%line-wrapped-p s 0)
-              "all rows must still be unwrapped after shift on empty screen")))
+  ;; %shift-line-wrapped-up on a fresh screen (no hash-table) is a no-op.
+  (it "shift-line-wrapped-up-noop-when-no-table"
+    (with-screen (s 10 5)
+      (finishes (cl-tmux/terminal/types:%shift-line-wrapped-up s 0 4))
+      (expect (cl-tmux/terminal/types:%line-wrapped-p s 0) :to-be-falsy))))
 
 ;;; ── SUITE: ANSI mode boolean slots (via define-boolean-slot-tests) ───────────
 ;;;
@@ -155,58 +133,45 @@
 
 ;;; ── SUITE: screen-copy-search-direction ──────────────────────────────────────
 
-(def-suite copy-search-direction-suite
-  :description "screen-copy-search-direction slot: default NIL, forward and backward"
-  :in terminal-suite)
-(in-suite copy-search-direction-suite)
+(describe "terminal-suite/copy-search-direction-suite"
 
-(test screen-copy-search-direction-defaults-nil
-  "screen-copy-search-direction is NIL on a fresh screen."
-  (with-screen (s 10 5)
-    (is (null (cl-tmux/terminal/types:screen-copy-search-direction s))
-        "copy-search-direction must be NIL initially")))
+  ;; screen-copy-search-direction is NIL on a fresh screen.
+  (it "screen-copy-search-direction-defaults-nil"
+    (with-screen (s 10 5)
+      (expect (null (cl-tmux/terminal/types:screen-copy-search-direction s)))))
 
-(test screen-copy-search-direction-can-be-set-forward
-  "screen-copy-search-direction can be set to :forward."
-  (with-screen (s 10 5)
-    (setf (cl-tmux/terminal/types:screen-copy-search-direction s) :forward)
-    (is (eq :forward (cl-tmux/terminal/types:screen-copy-search-direction s))
-        "copy-search-direction must be :forward after setf")))
+  ;; screen-copy-search-direction can be set to :forward.
+  (it "screen-copy-search-direction-can-be-set-forward"
+    (with-screen (s 10 5)
+      (setf (cl-tmux/terminal/types:screen-copy-search-direction s) :forward)
+      (expect (eq :forward (cl-tmux/terminal/types:screen-copy-search-direction s)))))
 
-(test screen-copy-search-direction-can-be-set-backward
-  "screen-copy-search-direction can be set to :backward."
-  (with-screen (s 10 5)
-    (setf (cl-tmux/terminal/types:screen-copy-search-direction s) :backward)
-    (is (eq :backward (cl-tmux/terminal/types:screen-copy-search-direction s))
-        "copy-search-direction must be :backward after setf")))
+  ;; screen-copy-search-direction can be set to :backward.
+  (it "screen-copy-search-direction-can-be-set-backward"
+    (with-screen (s 10 5)
+      (setf (cl-tmux/terminal/types:screen-copy-search-direction s) :backward)
+      (expect (eq :backward (cl-tmux/terminal/types:screen-copy-search-direction s)))))
 
-(test screen-copy-search-direction-can-be-cleared
-  "screen-copy-search-direction can be reset to NIL."
-  (with-screen (s 10 5)
-    (setf (cl-tmux/terminal/types:screen-copy-search-direction s) :forward)
-    (setf (cl-tmux/terminal/types:screen-copy-search-direction s) nil)
-    (is (null (cl-tmux/terminal/types:screen-copy-search-direction s))
-        "copy-search-direction must be NIL after clearing")))
+  ;; screen-copy-search-direction can be reset to NIL.
+  (it "screen-copy-search-direction-can-be-cleared"
+    (with-screen (s 10 5)
+      (setf (cl-tmux/terminal/types:screen-copy-search-direction s) :forward)
+      (setf (cl-tmux/terminal/types:screen-copy-search-direction s) nil)
+      (expect (null (cl-tmux/terminal/types:screen-copy-search-direction s))))))
 
 ;;; ── SUITE: screen-copy-rect-select-p ────────────────────────────────────────
 
-(def-suite copy-rect-select-suite
-  :description "screen-copy-rect-select-p slot: default NIL and toggle"
-  :in terminal-suite)
-(in-suite copy-rect-select-suite)
+(describe "terminal-suite/copy-rect-select-suite"
 
-(test screen-copy-rect-select-p-defaults-nil
-  "screen-copy-rect-select-p is NIL on a fresh screen."
-  (with-screen (s 10 5)
-    (is-false (cl-tmux/terminal/types:screen-copy-rect-select-p s)
-              "copy-rect-select-p must be NIL initially")))
+  ;; screen-copy-rect-select-p is NIL on a fresh screen.
+  (it "screen-copy-rect-select-p-defaults-nil"
+    (with-screen (s 10 5)
+      (expect (cl-tmux/terminal/types:screen-copy-rect-select-p s) :to-be-falsy)))
 
-(test screen-copy-rect-select-p-can-be-set-and-cleared
-  "screen-copy-rect-select-p can be toggled via setf."
-  (with-screen (s 10 5)
-    (setf (cl-tmux/terminal/types:screen-copy-rect-select-p s) t)
-    (is-true (cl-tmux/terminal/types:screen-copy-rect-select-p s)
-             "copy-rect-select-p must be T after setf T")
-    (setf (cl-tmux/terminal/types:screen-copy-rect-select-p s) nil)
-    (is-false (cl-tmux/terminal/types:screen-copy-rect-select-p s)
-              "copy-rect-select-p must be NIL after setf NIL")))
+  ;; screen-copy-rect-select-p can be toggled via setf.
+  (it "screen-copy-rect-select-p-can-be-set-and-cleared"
+    (with-screen (s 10 5)
+      (setf (cl-tmux/terminal/types:screen-copy-rect-select-p s) t)
+      (expect (cl-tmux/terminal/types:screen-copy-rect-select-p s) :to-be-truthy)
+      (setf (cl-tmux/terminal/types:screen-copy-rect-select-p s) nil)
+      (expect (cl-tmux/terminal/types:screen-copy-rect-select-p s) :to-be-falsy))))

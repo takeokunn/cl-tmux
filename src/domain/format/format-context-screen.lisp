@@ -59,6 +59,22 @@
          (and (stringp table) (string/= table "root") table)))
       (t "root"))))
 
+(defmacro %if-copy-mode (pane-scr value-form)
+  "Evaluate VALUE-FORM when PANE-SCR exists and is in copy mode; otherwise \"\".
+   Factors out the (if (and pane-scr (screen-copy-mode-p pane-scr)) … \"\")
+   guard repeated across the copy-mode-only format variables below."
+  `(if (and ,pane-scr (cl-tmux/terminal:screen-copy-mode-p ,pane-scr))
+       ,value-form
+       ""))
+
+(defmacro %copy-mode-flag (pane-scr &optional extra-condition)
+  "\"1\"/\"0\" for PANE-SCR being in copy mode, optionally ANDed with
+   EXTRA-CONDITION (e.g. an active selection)."
+  `(if (and ,pane-scr
+            (cl-tmux/terminal:screen-copy-mode-p ,pane-scr)
+            ,@(when extra-condition (list extra-condition)))
+       "1" "0"))
+
 (defun %screen-context-plist (pane-scr cursor-x cursor-y)
   "Build the screen/copy-mode slice of the format-context plist for PANE-SCR.
    PANE-SCR is the pane's screen object (or NIL); CURSOR-X and CURSOR-Y are
@@ -72,37 +88,21 @@
             (string (cl-tmux/terminal:cell-char
                      (cl-tmux/terminal:screen-cell pane-scr cursor-x cursor-y)))
             "")
-        :pane-in-mode         (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr)) "1" "0")
+        :pane-in-mode         (%copy-mode-flag pane-scr)
         ;; tmux #{client_key_table}: synthesized from the live key state —
         ;; "prefix" while awaiting the command key, "copy-mode" while the
         ;; active pane is in copy mode, else the custom *key-table* or "root".
         ;; Runtime specials live in CL-TMUX; resolved by name so the format
         ;; layer keeps no dependency on the umbrella package.
         :client-key-table     (%synthesized-client-key-table pane-scr)
-        :pane-mode            (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr)) "copy-mode" "")
-        :scroll-position      (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                  (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
-                                  "")
-        :copy-position        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                  (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr))
-                                  "")
-        :copy-position-limit  (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                  (format nil "~D" (length (cl-tmux/terminal:screen-scrollback pane-scr)))
-                                  "")
-        :selection-active     (if (and pane-scr
-                                       (cl-tmux/terminal:screen-copy-mode-p pane-scr)
-                                       (cl-tmux/terminal:screen-copy-selecting pane-scr))
-                                  "1" "0")
-        :selection-present    (if (and pane-scr
-                                       (cl-tmux/terminal:screen-copy-mode-p pane-scr)
-                                       (cl-tmux/terminal:screen-copy-selecting pane-scr))
-                                  "1" "0")
-        :copy-cursor-x        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                  (format nil "~D" (cdr (cl-tmux/terminal:screen-copy-cursor pane-scr)))
-                                  "")
-        :copy-cursor-y        (if (and pane-scr (cl-tmux/terminal:screen-copy-mode-p pane-scr))
-                                  (format nil "~D" (car (cl-tmux/terminal:screen-copy-cursor pane-scr)))
-                                  "")
+        :pane-mode            (%if-copy-mode pane-scr "copy-mode")
+        :scroll-position      (%if-copy-mode pane-scr (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr)))
+        :copy-position        (%if-copy-mode pane-scr (format nil "~D" (cl-tmux/terminal:screen-copy-offset pane-scr)))
+        :copy-position-limit  (%if-copy-mode pane-scr (format nil "~D" (length (cl-tmux/terminal:screen-scrollback pane-scr))))
+        :selection-active     (%copy-mode-flag pane-scr (cl-tmux/terminal:screen-copy-selecting pane-scr))
+        :selection-present    (%copy-mode-flag pane-scr (cl-tmux/terminal:screen-copy-selecting pane-scr))
+        :copy-cursor-x        (%if-copy-mode pane-scr (format nil "~D" (cdr (cl-tmux/terminal:screen-copy-cursor pane-scr))))
+        :copy-cursor-y        (%if-copy-mode pane-scr (format nil "~D" (car (cl-tmux/terminal:screen-copy-cursor pane-scr))))
         :history-size         (format nil "~D"
                                       (if pane-scr
                                           (length (cl-tmux/terminal:screen-scrollback pane-scr))

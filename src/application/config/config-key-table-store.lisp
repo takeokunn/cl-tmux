@@ -34,7 +34,7 @@
     (setf (gethash key inner)
           (cons command (list :repeatable repeatable :note note)))))
 
-(defun %key-display-string (key)
+(defun key-display-string (key)
   "Human-readable spelling of a key-table KEY (a character or key-name string)."
   (if (characterp key)
       (let ((code (char-code key)))
@@ -60,7 +60,7 @@
                (lambda (key binding)
                  (let ((note (getf (cdr binding) :note)))
                    (when (or note include-unnoted-p)
-                     (push (list (%key-display-string key)
+                     (push (list (key-display-string key)
                                  (or note (format nil "~(~A~)" (car binding))))
                            rows))))
                inner)

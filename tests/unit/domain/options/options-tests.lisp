@@ -6,14 +6,11 @@
 ;;;; with-single-option, with-single-server-option) are defined in
 ;;;; tests/helpers-options.lisp so that config-directives-tests can reuse them.
 
-(def-suite options-suite :description "Global option registry")
-(in-suite options-suite)
-
 ;;; Table-driven default-value checker.
 ;;; check-option-defaults collapses ~25 near-identical single-assertion tests.
 
 (defmacro check-option-defaults (&rest entries)
-  "Generate IS assertions for each (name expected) or (name :registered)
+  "Generate EXPECT assertions for each (name expected) or (name :registered)
    or (name :string-p) entry."
   `(progn
      ,@(mapcar
@@ -21,316 +18,287 @@
           (destructuring-bind (name check) entry
             (cond
               ((eq check :registered)
-               `(is (cl-tmux/options:option-defined-p ,name)
-                    ,(format nil "~S must be a registered option" name)))
+               `(expect (cl-tmux/options:option-defined-p ,name)))
               ((eq check :string-p)
                `(progn
-                  (is (cl-tmux/options:option-defined-p ,name)
-                      ,(format nil "~S must be a registered option" name))
-                  (is (stringp (cl-tmux/options:get-option ,name))
-                      ,(format nil "~S default must be a string" name))))
+                  (expect (cl-tmux/options:option-defined-p ,name))
+                  (expect (stringp (cl-tmux/options:get-option ,name)))))
               (t
-               `(is (equal ,check (cl-tmux/options:get-option ,name))
-                    ,(format nil "~S default must be ~S" name check))))))
+               `(expect (equal ,check (cl-tmux/options:get-option ,name)))))))
         entries)))
 
-;;; get-option
+(describe "options-suite"
 
-(test get-option-returns-nil-when-absent
-  "get-option returns NIL for a key not in the table."
-  (with-fresh-options
-    (is (null (cl-tmux/options:get-option "nonexistent")))))
+  ;;; get-option
 
-(test get-option-returns-default-when-absent
-  "get-option returns the supplied default when key is absent."
-  (with-fresh-options
-    (is (= 42 (cl-tmux/options:get-option "missing" 42)))))
+  ;; get-option returns NIL for a key not in the table.
+  (it "get-option-returns-nil-when-absent"
+    (with-fresh-options
+      (expect (null (cl-tmux/options:get-option "nonexistent")))))
 
-(test get-option-unset-reverts-to-registry-default
-  "After a registered option is removed (set -u), get-option with NO caller
-   default reverts to the registry spec default, mirroring tmux
-   options_remove_or_default.  An explicit caller default still wins."
-  ;; with-fresh-global-options copies *global-options* but SHARES *option-registry*,
-  ;; so default-terminal's spec ("screen") is still registered.
-  (with-fresh-global-options
-    (remhash "default-terminal" cl-tmux/options:*global-options*)
-    (is (string= "screen" (cl-tmux/options:get-option "default-terminal"))
-        "unset registered option must read as its registry default \"screen\"")
-    ;; A registered option with no caller default also falls back even if never set.
-    (remhash "history-limit" cl-tmux/options:*global-options*)
-    (is (= 2000 (cl-tmux/options:get-option "history-limit"))
-        "unset integer option must read as its registry default 2000")
-    ;; An explicitly supplied default (even NIL) is still honored over the registry.
-    (is (null (cl-tmux/options:get-option "default-terminal" nil))
-        "an explicit NIL caller default must override the registry fallback")
-    (is (= 7 (cl-tmux/options:get-option "default-terminal" 7))
-        "an explicit caller default must override the registry fallback")
-    ;; An UNregistered key still returns the caller default / NIL (no spec to fall back to).
-    (is (null (cl-tmux/options:get-option "totally-unknown-opt"))
-        "an unregistered absent key has no spec, so it reads as NIL")))
+  ;; get-option returns the supplied default when key is absent.
+  (it "get-option-returns-default-when-absent"
+    (with-fresh-options
+      (expect (= 42 (cl-tmux/options:get-option "missing" 42)))))
 
-(test get-server-option-unset-reverts-to-registry-default
-  "get-server-option falls back to the server registry spec default when a
-   registered server option is absent and no caller default is supplied."
-  (with-fresh-server-options
-    ;; *server-options* is empty here; *server-option-registry* is shared, so
-    ;; default-terminal's server spec ("screen") and escape-time (10) apply.
-    (is (string= "screen" (cl-tmux/options:get-server-option "default-terminal"))
-        "absent registered server option must read as its registry default")
-    (is (= 10 (cl-tmux/options:get-server-option "escape-time"))
-        "absent registered integer server option must read as its registry default")
-    ;; Explicit caller default (incl. NIL) still wins; unregistered key reads as default.
-    (is (null (cl-tmux/options:get-server-option "default-terminal" nil))
-        "an explicit NIL caller default must override the server registry fallback")
-    (is (null (cl-tmux/options:get-server-option "nonexistent-server-opt"))
-        "an unregistered absent server key reads as NIL")))
+  ;; After a registered option is removed (set -u), get-option with NO caller
+  ;; default reverts to the registry spec default, mirroring tmux
+  ;; options_remove_or_default.  An explicit caller default still wins.
+  (it "get-option-unset-reverts-to-registry-default"
+    ;; with-fresh-global-options copies *global-options* but SHARES *option-registry*,
+    ;; so default-terminal's spec ("screen") is still registered.
+    (with-fresh-global-options
+      (remhash "default-terminal" cl-tmux/options:*global-options*)
+      (expect (string= "screen" (cl-tmux/options:get-option "default-terminal")))
+      ;; A registered option with no caller default also falls back even if never set.
+      (remhash "history-limit" cl-tmux/options:*global-options*)
+      (expect (= 2000 (cl-tmux/options:get-option "history-limit")))
+      ;; An explicitly supplied default (even NIL) is still honored over the registry.
+      (expect (null (cl-tmux/options:get-option "default-terminal" nil)))
+      (expect (= 7 (cl-tmux/options:get-option "default-terminal" 7)))
+      ;; An UNregistered key still returns the caller default / NIL (no spec to fall back to).
+      (expect (null (cl-tmux/options:get-option "totally-unknown-opt")))))
 
-;;; set-option / get-option round-trip
+  ;; get-server-option falls back to the server registry spec default when a
+  ;; registered server option is absent and no caller default is supplied.
+  (it "get-server-option-unset-reverts-to-registry-default"
+    (with-fresh-server-options
+      ;; *server-options* is empty here; *server-option-registry* is shared, so
+      ;; default-terminal's server spec ("screen") and escape-time (10) apply.
+      (expect (string= "screen" (cl-tmux/options:get-server-option "default-terminal")))
+      (expect (= 10 (cl-tmux/options:get-server-option "escape-time")))
+      ;; Explicit caller default (incl. NIL) still wins; unregistered key reads as default.
+      (expect (null (cl-tmux/options:get-server-option "default-terminal" nil)))
+      (expect (null (cl-tmux/options:get-server-option "nonexistent-server-opt")))))
 
-(test set-and-get-option-string
-  "set-option stores a string value retrievable by get-option."
-  (with-fresh-options
-    (cl-tmux/options:set-option "status-left" "my-session")
-    (is (string= "my-session" (cl-tmux/options:get-option "status-left")))))
+  ;;; set-option / get-option round-trip
 
-;;; option-defined-p
+  ;; set-option stores a string value retrievable by get-option.
+  (it "set-and-get-option-string"
+    (with-fresh-options
+      (cl-tmux/options:set-option "status-left" "my-session")
+      (expect (string= "my-session" (cl-tmux/options:get-option "status-left")))))
 
-(test option-defined-p-table
-  "option-defined-p returns T for registered options, NIL for unknowns."
-  (dolist (row '(("status"         t   "known option → T")
-                 ("no-such-option" nil "unknown option → NIL")))
-    (destructuring-bind (name expected desc) row
-      (is (if expected
-              (cl-tmux/options:option-defined-p name)
-              (null (cl-tmux/options:option-defined-p name)))
-          "~A" desc))))
+  ;;; option-defined-p
 
-;;; Type coercion
+  ;; option-defined-p returns T for registered options, NIL for unknowns.
+  (it "option-defined-p-table"
+    (dolist (row '(("status"         t   "known option → T")
+                   ("no-such-option" nil "unknown option → NIL")))
+      (destructuring-bind (name expected desc) row
+        (declare (ignore desc))
+        (expect (if expected
+                (cl-tmux/options:option-defined-p name)
+                (null (cl-tmux/options:option-defined-p name)))))))
 
-(test boolean-coercion-table
-  "set-option coerces :boolean option strings: on/true/1 → T, off/0/false → NIL.
-   Each row: (str expected description)."
-  (dolist (row '(("on"    t   "on → T")
-                 ("true"  t   "true → T")
-                 ("1"     t   "1 → T")
-                 ("off"   nil "off → NIL")
-                 ("0"     nil "0 → NIL")
-                 ("false" nil "false → NIL")))
-    (destructuring-bind (str expected desc) row
-      (with-fresh-global-options
-        (if expected
-            (is-true  (cl-tmux/options:set-option "mouse" str) desc)
-            (is-false (cl-tmux/options:set-option "mouse" str) desc))))))
+  ;;; Type coercion
 
+  ;; set-option coerces :boolean option strings: on/true/1 → T, off/0/false → NIL.
+  ;; Each row: (str expected description).
+  (it "boolean-coercion-table"
+    (dolist (row '(("on"    t   "on → T")
+                   ("true"  t   "true → T")
+                   ("1"     t   "1 → T")
+                   ("off"   nil "off → NIL")
+                   ("0"     nil "0 → NIL")
+                   ("false" nil "false → NIL")))
+      (destructuring-bind (str expected desc) row
+        (declare (ignore desc))
+        (with-fresh-global-options
+          (if expected
+              (expect (cl-tmux/options:set-option "mouse" str) :to-be-truthy)
+              (expect (cl-tmux/options:set-option "mouse" str) :to-be-falsy))))))
 
-(test status-numeric-value-survives-coercion
-  "The `status` option is a CHOICE/number (off|on|2..5), NOT a boolean: a line
-   count is stored UNCHANGED so the renderer's status-line-count sees it.  The old
-   :boolean type coerced \"2\" to NIL, hiding a bar whose rows the layout still
-   reserved via *status-height* — the multi-line-status bug."
-  (with-fresh-global-options
-    (is (string= "2" (cl-tmux/options:set-option "status" "2"))
-        "set-option returns the raw \"2\" (no boolean coercion to NIL)")
-    (is (string= "2" (cl-tmux/options:get-option "status"))
-        "get-option returns \"2\" so status-line-count reserves 2 rows")
-    (is (string= "off" (cl-tmux/options:set-option "status" "off"))
-        "off is stored verbatim (status-line-count maps it to 0)")
-    (is (string= "on" (cl-tmux/options:set-option "status" "on"))
-        "on is stored verbatim (status-line-count maps it to 1)")))
+  ;; The `status` option is a CHOICE/number (off|on|2..5), NOT a boolean: a line
+  ;; count is stored UNCHANGED so the renderer's status-line-count sees it.  The old
+  ;; :boolean type coerced "2" to NIL, hiding a bar whose rows the layout still
+  ;; reserved via *status-height* — the multi-line-status bug.
+  (it "status-numeric-value-survives-coercion"
+    (with-fresh-global-options
+      (expect (string= "2" (cl-tmux/options:set-option "status" "2")))
+      (expect (string= "2" (cl-tmux/options:get-option "status")))
+      (expect (string= "off" (cl-tmux/options:set-option "status" "off")))
+      (expect (string= "on" (cl-tmux/options:set-option "status" "on")))))
 
-(test integer-coercion-table
-  "Setting a :integer option with a numeric string coerces to the integer value."
-  (dolist (row '(("5000" 5000 "5000 → integer 5000")
-                 ("500"   500 "500 → integer 500")))
-    (destructuring-bind (str-val expected desc) row
-      (with-fresh-global-options
-        (is (= expected (cl-tmux/options:set-option "history-limit" str-val))
-            "~A" desc)))))
+  ;; Setting a :integer option with a numeric string coerces to the integer value.
+  (it "integer-coercion-table"
+    (dolist (row '(("5000" 5000 "5000 → integer 5000")
+                   ("500"   500 "500 → integer 500")))
+      (destructuring-bind (str-val expected desc) row
+        (declare (ignore desc))
+        (with-fresh-global-options
+          (expect (= expected (cl-tmux/options:set-option "history-limit" str-val)))))))
 
-(test string-coercion-from-non-string
-  "Setting a :string option with a non-string value coerces via format ~A."
-  (with-fresh-global-options
-    (is (string= "42" (cl-tmux/options:set-option "status-left" 42)))))
+  ;; Setting a :string option with a non-string value coerces via format ~A.
+  (it "string-coercion-from-non-string"
+    (with-fresh-global-options
+      (expect (string= "42" (cl-tmux/options:set-option "status-left" 42)))))
 
-;;; all-options
+  ;;; all-options
 
-(test all-options-returns-alist
-  "all-options returns an alist of (name . value) pairs."
-  (let ((opts (cl-tmux/options:all-options)))
-    (is (listp opts))
-    (is (every #'consp opts)
-        "each entry must be a cons pair")))
+  ;; all-options returns an alist of (name . value) pairs.
+  (it "all-options-returns-alist"
+    (let ((opts (cl-tmux/options:all-options)))
+      (expect (listp opts))
+      (expect (every #'consp opts))))
 
-(test define-tmux-options-macro-is-defined
-  "define-tmux-options is a registered macro."
-  (is (macro-function 'cl-tmux/options:define-tmux-options)))
+  ;; define-tmux-options is a registered macro.
+  (it "define-tmux-options-macro-is-defined"
+    (expect (macro-function 'cl-tmux/options:define-tmux-options)))
 
-;;; Server options
+  ;;; Server options
 
-(test server-options-escape-time-default
-  "*server-options* contains the default escape-time = 10."
-  (is (= 10 (cl-tmux/options:get-server-option "escape-time"))
-      "default escape-time must be 10"))
+  ;; *server-options* contains the default escape-time = 10.
+  (it "server-options-escape-time-default"
+    (expect (= 10 (cl-tmux/options:get-server-option "escape-time"))))
 
-(test server-options-exit-empty-default
-  "*server-options* contains exit-empty = T by default."
-  (is (cl-tmux/options:get-server-option "exit-empty")
-      "default exit-empty must be T"))
+  ;; *server-options* contains exit-empty = T by default.
+  (it "server-options-exit-empty-default"
+    (expect (cl-tmux/options:get-server-option "exit-empty")))
 
-(test set-server-option-stores-value
-  "set-server-option stores a value in *server-options*."
-  (with-fresh-server-options
-    (cl-tmux/options:set-server-option "escape-time" "100")
-    (is (= 100 (cl-tmux/options:get-server-option "escape-time"))
-        "escape-time must be 100 after set-server-option")))
+  ;; set-server-option stores a value in *server-options*.
+  (it "set-server-option-stores-value"
+    (with-fresh-server-options
+      (cl-tmux/options:set-server-option "escape-time" "100")
+      (expect (= 100 (cl-tmux/options:get-server-option "escape-time")))))
 
-(test set-server-option-boolean-coercion
-  "set-server-option coerces boolean values."
-  (with-fresh-server-options
-    (cl-tmux/options:set-server-option "exit-empty" "off")
-    (is (null (cl-tmux/options:get-server-option "exit-empty"))
-        "exit-empty must be NIL after setting to off")))
+  ;; set-server-option coerces boolean values.
+  (it "set-server-option-boolean-coercion"
+    (with-fresh-server-options
+      (cl-tmux/options:set-server-option "exit-empty" "off")
+      (expect (null (cl-tmux/options:get-server-option "exit-empty")))))
 
-;;; show-options
+  ;;; show-options
 
-(test show-options-returns-string
-  "show-options returns a non-empty string."
-  (let ((out (cl-tmux/options:show-options)))
-    (is (stringp out) "show-options must return a string")
-    (is (plusp (length out)) "show-options string must be non-empty")))
-
-(test show-options-contains-key-value-pairs
-  "show-options output contains option name/value pairs."
-  (let ((cl-tmux/options:*global-options*
-         (let ((ht (make-hash-table :test #'equal)))
-           (setf (gethash "status" ht) t)
-           (setf (gethash "history-limit" ht) 2000)
-           ht)))
+  ;; show-options returns a non-empty string.
+  (it "show-options-returns-string"
     (let ((out (cl-tmux/options:show-options)))
-      (is (search "status" out)
-          "show-options must include status option (got ~S)" out)
-      (is (search "history-limit" out)
-          "show-options must include history-limit option (got ~S)" out)))
-  ;; Same assertions using the fixture macro
-  (with-single-option ("status" t)
-    (is (search "status" (cl-tmux/options:show-options))
-        "with-single-option: show-options must include status")))
+      (expect (stringp out))
+      (expect (plusp (length out)))))
 
-(test show-option-single-option
-  "show-option returns the value of a single named option."
-  (with-single-option ("status-interval" 30)
-    (let ((out (cl-tmux/options:show-option "status-interval")))
-      (is (search "status-interval" out)
-          "show-option output must include the option name (got ~S)" out)
-      (is (search "30" out)
-          "show-option output must include the value 30 (got ~S)" out))))
+  ;; show-options output contains option name/value pairs.
+  (it "show-options-contains-key-value-pairs"
+    (let ((cl-tmux/options:*global-options*
+           (let ((ht (make-hash-table :test #'equal)))
+             (setf (gethash "status" ht) t)
+             (setf (gethash "history-limit" ht) 2000)
+             ht)))
+      (let ((out (cl-tmux/options:show-options)))
+        (expect (search "status" out))
+        (expect (search "history-limit" out))))
+    ;; Same assertions using the fixture macro
+    (with-single-option ("status" t)
+      (expect (search "status" (cl-tmux/options:show-options)))))
 
-(test show-option-missing-option
-  "show-option for an absent option indicates it is not set."
-  (with-fresh-options
-    (let ((out (cl-tmux/options:show-option "no-such-option")))
-      (is (search "no-such-option" out)
-          "show-option output must include the option name (got ~S)" out))))
+  ;; show-option returns the value of a single named option.
+  (it "show-option-single-option"
+    (with-single-option ("status-interval" 30)
+      (let ((out (cl-tmux/options:show-option "status-interval")))
+        (expect (search "status-interval" out))
+        (expect (search "30" out)))))
 
-(test show-options-server-scope
-  "show-options with :server scope returns server options."
-  (with-single-server-option ("escape-time" 500)
-    (let ((out (cl-tmux/options:show-options :server)))
-      (is (search "escape-time" out)
-          "show-options :server must include escape-time (got ~S)" out))))
+  ;; show-option for an absent option indicates it is not set.
+  (it "show-option-missing-option"
+    (with-fresh-options
+      (let ((out (cl-tmux/options:show-option "no-such-option")))
+        (expect (search "no-such-option" out)))))
 
-;;; Registered options: style/justify checks
+  ;; show-options with :server scope returns server options.
+  (it "show-options-server-scope"
+    (with-single-server-option ("escape-time" 500)
+      (let ((out (cl-tmux/options:show-options :server)))
+        (expect (search "escape-time" out)))))
 
-(test registered-style-and-layout-options
-  "Style and layout options are registered with correct types."
-  (check-option-defaults
-    ("status-style"                 :registered)
-    ("status-justify"               :registered)
-    ("window-status-current-style"  :registered)))
+  ;;; Registered options: style/justify checks
 
-;;; Default values: parameterised table-driven check
+  ;; Style and layout options are registered with correct types.
+  (it "registered-style-and-layout-options"
+    (check-option-defaults
+      ("status-style"                 :registered)
+      ("status-justify"               :registered)
+      ("window-status-current-style"  :registered)))
 
-(test option-default-values
-  "All registered options have the documented default values."
-  (check-option-defaults
-    ("pane-base-index"               0)
-    ("default-command"               "")
-    ("status-left-length"            40)
-    ("status-right-length"           40)
-    ("window-status-format"          :string-p)
-    ("window-status-current-format"  :string-p)
-    ("window-status-style"           :registered)
-    ("window-status-separator"       " ")
-    ("word-separators"               " -_@")
-    ("automatic-rename"              t)
-    ("automatic-rename-format"       :registered)
-    ("bell-action"                   "any")
-    ("visual-bell"                   "off")
-    ("visual-activity"               "off")
-    ("visual-silence"                "off")
-    ("monitor-activity"              nil)
-    ("monitor-silence"               0)
-    ("monitor-bell"                  t)
-    ("activity-action"               "other")
-    ("silence-action"                "other")
-    ("message-line"                  0)
-    ("assume-paste-time"             1)
-    ("buffer-limit"                  50)
-    ("focus-events"                  nil)
-    ("copy-command"                  "")
-    ("set-titles"                    nil)
-    ("set-titles-string"             "#S:#I:#W")
-    ("remain-on-exit"                nil)
-    ("renumber-windows"              nil)
-    ("message-style"                 "")
-    ("exit-unattached"               nil)))
+  ;;; Default values: parameterised table-driven check
 
-(test update-environment-default
-  "update-environment default contains expected variable names."
-  (let ((val (cl-tmux/options:get-option "update-environment")))
-    (is (stringp val))
-    (is (search "DISPLAY" val))
-    (is (search "SSH_AUTH_SOCK" val))))
+  ;; All registered options have the documented default values.
+  (it "option-default-values"
+    (check-option-defaults
+      ("pane-base-index"               0)
+      ("default-command"               "")
+      ("status-left-length"            40)
+      ("status-right-length"           40)
+      ("window-status-format"          :string-p)
+      ("window-status-current-format"  :string-p)
+      ("window-status-style"           :registered)
+      ("window-status-separator"       " ")
+      ("word-separators"               " -_@")
+      ("automatic-rename"              t)
+      ("automatic-rename-format"       :registered)
+      ("bell-action"                   "any")
+      ("visual-bell"                   "off")
+      ("visual-activity"               "off")
+      ("visual-silence"                "off")
+      ("monitor-activity"              nil)
+      ("monitor-silence"               0)
+      ("monitor-bell"                  t)
+      ("activity-action"               "other")
+      ("silence-action"                "other")
+      ("message-line"                  0)
+      ("assume-paste-time"             1)
+      ("buffer-limit"                  50)
+      ("focus-events"                  nil)
+      ("copy-command"                  "")
+      ("set-titles"                    nil)
+      ("set-titles-string"             "#S:#I:#W")
+      ("remain-on-exit"                nil)
+      ("renumber-windows"              nil)
+      ("message-style"                 "")
+      ("exit-unattached"               nil)))
 
-;;; Round-trip tests
+  ;; update-environment default contains expected variable names.
+  (it "update-environment-default"
+    (let ((val (cl-tmux/options:get-option "update-environment")))
+      (expect (stringp val))
+      (expect (search "DISPLAY" val))
+      (expect (search "SSH_AUTH_SOCK" val))))
 
-(test set-option-boolean-set-titles
-  "set-titles boolean set/get round-trip."
-  (with-fresh-global-options
-    (is (eq t (cl-tmux/options:set-option "set-titles" "on")))
-    (is (eq t (cl-tmux/options:get-option "set-titles")))
-    (is (null (cl-tmux/options:set-option "set-titles" "off")))
-    (is (null (cl-tmux/options:get-option "set-titles")))))
+  ;;; Round-trip tests
 
-(test set-option-integer-status-left-length
-  "status-left-length integer set/get round-trip."
-  (with-fresh-global-options
-    (is (= 80 (cl-tmux/options:set-option "status-left-length" "80")))
-    (is (= 80 (cl-tmux/options:get-option "status-left-length")))))
+  ;; set-titles boolean set/get round-trip.
+  (it "set-option-boolean-set-titles"
+    (with-fresh-global-options
+      (expect (eq t (cl-tmux/options:set-option "set-titles" "on")))
+      (expect (eq t (cl-tmux/options:get-option "set-titles")))
+      (expect (null (cl-tmux/options:set-option "set-titles" "off")))
+      (expect (null (cl-tmux/options:get-option "set-titles")))))
 
-(test pane-base-index-set-get
-  "pane-base-index set/get round-trip."
-  (with-fresh-global-options
-    (is (= 1 (cl-tmux/options:set-option "pane-base-index" "1")))
-    (is (= 1 (cl-tmux/options:get-option "pane-base-index")))))
+  ;; status-left-length integer set/get round-trip.
+  (it "set-option-integer-status-left-length"
+    (with-fresh-global-options
+      (expect (= 80 (cl-tmux/options:set-option "status-left-length" "80")))
+      (expect (= 80 (cl-tmux/options:get-option "status-left-length")))))
 
-;;; Tests for options-scope.lisp exports
+  ;; pane-base-index set/get round-trip.
+  (it "pane-base-index-set-get"
+    (with-fresh-global-options
+      (expect (= 1 (cl-tmux/options:set-option "pane-base-index" "1")))
+      (expect (= 1 (cl-tmux/options:get-option "pane-base-index")))))
 
-(test option-scope-from-name-window-options
-  "option-scope-from-name returns :window for window-scoped option names."
-  (dolist (name '("automatic-rename" "mode-keys" "mode-style"
-                  "monitor-activity" "synchronize-panes"
-                  "window-active-style" "wrap-search"
-                  "pane-border-status" "remain-on-exit"))
-    (is (eq :window (cl-tmux/options:option-scope-from-name name))
-        "~A should be :window scope" name)))
+  ;;; Tests for options-scope.lisp exports
 
-(test option-scope-from-name-session-options
-  "option-scope-from-name returns :session for non-window option names."
-  (dolist (name '("status" "status-interval" "history-limit"
-                  "escape-time" "default-terminal" "prefix"
-                  "display-time" "buffer-limit"))
-    (is (eq :session (cl-tmux/options:option-scope-from-name name))
-        "~A should be :session scope" name)))
+  ;; option-scope-from-name returns :window for window-scoped option names.
+  (it "option-scope-from-name-window-options"
+    (dolist (name '("automatic-rename" "mode-keys" "mode-style"
+                    "monitor-activity" "synchronize-panes"
+                    "window-active-style" "wrap-search"
+                    "pane-border-status" "remain-on-exit"))
+      (expect (eq :window (cl-tmux/options:option-scope-from-name name)))))
+
+  ;; option-scope-from-name returns :session for non-window option names.
+  (it "option-scope-from-name-session-options"
+    (dolist (name '("status" "status-interval" "history-limit"
+                    "escape-time" "default-terminal" "prefix"
+                    "display-time" "buffer-limit"))
+      (expect (eq :session (cl-tmux/options:option-scope-from-name name))))))
 
 ;;; ── option-present-for-scope-p (options-scope.lisp) ───────────────────────

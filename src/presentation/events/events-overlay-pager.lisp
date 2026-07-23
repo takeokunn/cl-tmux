@@ -26,7 +26,7 @@
         (progn
           (clear-overlay)
           (setf *dirty* t)
-          (values nil #'%ground-input-state)))))
+          (%ground-values)))))
 
 (defun %overlay-escape-final (buffer)
   "CPS state: received ESC '[', now reading the final byte.
@@ -39,14 +39,14 @@
       ((= byte +byte-arrow-up+)
        (overlay-scroll -1)
        (setf *dirty* t)
-       (values nil #'%ground-input-state))
+       (%ground-values))
       ;; ESC [ B - Down arrow: scroll overlay down
       ((= byte +byte-arrow-down+)
        (overlay-scroll 1)
        (setf *dirty* t)
-       (values nil #'%ground-input-state))
+       (%ground-values))
       ;; Unrecognised final byte: dismiss the overlay
       (t
        (clear-overlay)
        (setf *dirty* t)
-       (values nil #'%ground-input-state)))))
+       (%ground-values)))))

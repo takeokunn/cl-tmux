@@ -8,323 +8,268 @@
 
 ;;; ── Shared helpers ───────────────────────────────────────────────────────────
 
-(defun all-cells-blank-p (screen)
-  "Return T when every cell in SCREEN is a space with fg=7, bg=0.
-   A predicate form so callers can use it in IS or combine with AND."
-  (block check
-    (dotimes (y (screen-height screen) t)
-      (dotimes (x (screen-width screen))
-        (let ((c (screen-cell screen x y)))
-          (unless (and (char= #\Space (cell-char c))
-                       (= cl-tmux/terminal/types:+default-color+ (cell-fg c))
-                       (= cl-tmux/terminal/types:+default-color+ (cell-bg c)))
-            (return-from check nil)))))))
-
 (defmacro assert-all-cells-blank (screen)
   "Assert that every cell in SCREEN is a space with default fg/bg attributes.
-   Expands to one IS form per cell position so failures report coordinates."
+   Expands to one EXPECT form per cell position."
   (let ((s (gensym "SCREEN")))
     `(let ((,s ,screen))
        (dotimes (y (screen-height ,s))
          (dotimes (x (screen-width ,s))
            (let ((c (screen-cell ,s x y)))
-             (is (char= #\Space (cell-char c))
-                 "cell (~D,~D) char must be space" x y)
-             (is (= cl-tmux/terminal/types:+default-color+ (cell-fg c))
-                 "cell (~D,~D) fg must be the default sentinel" x y)
-             (is (= cl-tmux/terminal/types:+default-color+ (cell-bg c))
-                 "cell (~D,~D) bg must be the default sentinel" x y)))))))
+             (expect (char= #\Space (cell-char c)))
+             (expect (= cl-tmux/terminal/types:+default-color+ (cell-fg c)))
+             (expect (= cl-tmux/terminal/types:+default-color+ (cell-bg c)))))))))
 
 ;;; ── SUITE: screen construction ───────────────────────────────────────────────
 
-(def-suite screen-construction
-  :description "make-screen dimensions, initial slot values, and grid allocation"
-  :in terminal-suite)
-(in-suite screen-construction)
+(describe "terminal-suite/screen-construction"
 
-(test make-screen-sets-width-and-height
-  :description "make-screen stores the requested width and height."
-  (let ((s (make-screen 40 12)))
-    (is (= 40 (screen-width  s)) "width must be 40")
-    (is (= 12 (screen-height s)) "height must be 12")))
+  ;; make-screen stores the requested width and height.
+  (it "make-screen-sets-width-and-height"
+    (let ((s (make-screen 40 12)))
+      (expect (= 40 (screen-width  s)))
+      (expect (= 12 (screen-height s)))))
 
-(test make-screen-cursor-starts-at-origin
-  :description "A freshly created screen has its cursor at (0, 0)."
-  (with-screen (s 20 10)
-    (is (= 0 (screen-cursor-x s)) "initial cursor-x must be 0")
-    (is (= 0 (screen-cursor-y s)) "initial cursor-y must be 0")))
+  ;; A freshly created screen has its cursor at (0, 0).
+  (it "make-screen-cursor-starts-at-origin"
+    (with-screen (s 20 10)
+      (expect (= 0 (screen-cursor-x s)))
+      (expect (= 0 (screen-cursor-y s)))))
 
-(test make-screen-dirty-flag-is-true
-  :description "A freshly created screen is dirty."
-  (with-screen (s 10 5)
-    (is-true (cl-tmux/terminal/types:screen-dirty-p s)
-             "new screen must start dirty")))
+  ;; A freshly created screen is dirty.
+  (it "make-screen-dirty-flag-is-true"
+    (with-screen (s 10 5)
+      (expect (cl-tmux/terminal/types:screen-dirty-p s) :to-be-truthy)))
 
-(test make-screen-scroll-region-is-full-height
-  :description "The default scroll region spans the full screen height."
-  (with-screen (s 80 24)
-    (is (= 0  (cl-tmux/terminal/types:screen-scroll-top    s)) "scroll-top must be 0")
-    (is (= 23 (cl-tmux/terminal/types:screen-scroll-bottom s)) "scroll-bottom must be height-1")))
+  ;; The default scroll region spans the full screen height.
+  (it "make-screen-scroll-region-is-full-height"
+    (with-screen (s 80 24)
+      (expect (= 0  (cl-tmux/terminal/types:screen-scroll-top    s)))
+      (expect (= 23 (cl-tmux/terminal/types:screen-scroll-bottom s)))))
 
-(test make-screen-all-cells-are-blank
-  :description "Every cell in a new screen is a space with default attributes."
-  (with-screen (s 5 3)
-    (assert-all-cells-blank s)))
+  ;; Every cell in a new screen is a space with default attributes.
+  (it "make-screen-all-cells-are-blank"
+    (with-screen (s 5 3)
+      (assert-all-cells-blank s)))
 
-(test make-screen-cursor-visible-defaults-true
-  :description "The cursor is visible on a fresh screen."
-  (with-screen (s 10 5)
-    (is-true (cl-tmux/terminal/types:screen-cursor-visible s)
-             "cursor must be visible initially")))
+  ;; The cursor is visible on a fresh screen.
+  (it "make-screen-cursor-visible-defaults-true"
+    (with-screen (s 10 5)
+      (expect (cl-tmux/terminal/types:screen-cursor-visible s) :to-be-truthy)))
 
-(test make-screen-copy-mode-defaults-false
-  :description "Copy mode is off on a fresh screen."
-  (with-screen (s 10 5)
-    (is-false (screen-copy-mode-p s) "copy-mode-p must default to NIL")
-    (is (= 0 (screen-copy-offset s)) "copy-offset must default to 0")))
+  ;; Copy mode is off on a fresh screen.
+  (it "make-screen-copy-mode-defaults-false"
+    (with-screen (s 10 5)
+      (expect (screen-copy-mode-p s) :to-be-falsy)
+      (expect (= 0 (screen-copy-offset s)))))
 
-(test make-screen-response-queue-starts-empty
-  :description "The response queue is NIL on a fresh screen."
-  (with-screen (s 10 5)
-    (is (null (cl-tmux/terminal/types:screen-response-queue s))
-        "response-queue must start as NIL")))
+  ;; The response queue is NIL on a fresh screen.
+  (it "make-screen-response-queue-starts-empty"
+    (with-screen (s 10 5)
+      (expect (null (cl-tmux/terminal/types:screen-response-queue s)))))
 
-(test make-screen-saved-cursor-starts-nil
-  :description "The saved-cursor slot is NIL on a fresh screen."
-  (with-screen (s 10 5)
-    (is (null (cl-tmux/terminal/types:screen-saved-cursor s))
-        "saved-cursor must start as NIL")))
+  ;; The saved-cursor slot is NIL on a fresh screen.
+  (it "make-screen-saved-cursor-starts-nil"
+    (with-screen (s 10 5)
+      (expect (null (cl-tmux/terminal/types:screen-saved-cursor s)))))
 
-(test make-screen-scrollback-starts-empty
-  :description "The scrollback buffer is empty on a fresh screen."
-  (with-screen (s 10 5)
-    (is (null (screen-scrollback s))
-        "scrollback must start as NIL (empty)")))
+  ;; The scrollback buffer is empty on a fresh screen.
+  (it "make-screen-scrollback-starts-empty"
+    (with-screen (s 10 5)
+      (expect (null (screen-scrollback s))))))
 
 ;;; ── SUITE: screen-p predicate ────────────────────────────────────────────────
 
-(def-suite screen-p-suite
-  :description "screen-p type predicate"
-  :in terminal-suite)
-(in-suite screen-p-suite)
+(describe "terminal-suite/screen-p-suite"
 
-(test screen-p-returns-true-for-make-screen
-  :description "screen-p returns T for an object created by make-screen."
-  (let ((s (make-screen 10 5)))
-    (is-true (cl-tmux/terminal/types:screen-p s)
-             "screen-p must return T for a make-screen object")))
+  ;; screen-p returns T for an object created by make-screen.
+  (it "screen-p-returns-true-for-make-screen"
+    (let ((s (make-screen 10 5)))
+      (expect (cl-tmux/terminal/types:screen-p s) :to-be-truthy)))
 
-(test screen-p-returns-false-for-non-screen
-  :description "screen-p returns NIL for non-screen objects."
-  (is-false (cl-tmux/terminal/types:screen-p 42)
-            "screen-p must return NIL for an integer")
-  (is-false (cl-tmux/terminal/types:screen-p "hello")
-            "screen-p must return NIL for a string")
-  (is-false (cl-tmux/terminal/types:screen-p nil)
-            "screen-p must return NIL for NIL")
-  (is-false (cl-tmux/terminal/types:screen-p (cl-tmux/terminal/types:make-cell))
-            "screen-p must return NIL for a cell struct"))
+  ;; screen-p returns NIL for non-screen objects.
+  (it "screen-p-returns-false-for-non-screen"
+    (expect (cl-tmux/terminal/types:screen-p 42) :to-be-falsy)
+    (expect (cl-tmux/terminal/types:screen-p "hello") :to-be-falsy)
+    (expect (cl-tmux/terminal/types:screen-p nil) :to-be-falsy)
+    (expect (cl-tmux/terminal/types:screen-p (cl-tmux/terminal/types:make-cell)) :to-be-falsy)))
 
 ;;; ── SUITE: %make-screen direct constructor ───────────────────────────────────
 
-(def-suite make-screen-direct
-  :description "%make-screen low-level constructor contracts"
-  :in terminal-suite)
-(in-suite make-screen-direct)
+(describe "terminal-suite/make-screen-direct"
 
-(test percent-make-screen-produces-screen-of-correct-dimensions
-  :description "%make-screen with explicit :width/:height/:cells produces the right geometry."
-  (let* ((w 15) (h 6)
-         (cells (cl-tmux/terminal/types:%make-blank-cells (* w h)))
-         (s (cl-tmux/terminal/types:%make-screen :width w :height h :cells cells
-                                                  :scroll-bottom (1- h))))
-    (is (= w (screen-width  s)) "width must be 15")
-    (is (= h (screen-height s)) "height must be 6")
-    (is (cl-tmux/terminal/types:screen-p s)
-        "result must satisfy screen-p")))
+  ;; %make-screen with explicit :width/:height/:cells produces the right geometry.
+  (it "percent-make-screen-produces-screen-of-correct-dimensions"
+    (let* ((w 15) (h 6)
+           (cells (cl-tmux/terminal/types:%make-blank-cells (* w h)))
+           (s (cl-tmux/terminal/types:%make-screen :width w :height h :cells cells
+                                                    :scroll-bottom (1- h))))
+      (expect (= w (screen-width  s)))
+      (expect (= h (screen-height s)))
+      (expect (cl-tmux/terminal/types:screen-p s)))))
 
 ;;; ── SUITE: screen-cell and setf screen-cell ──────────────────────────────────
 
-(def-suite screen-cell-access
-  :description "screen-cell read and write accessors"
-  :in terminal-suite)
-(in-suite screen-cell-access)
+(describe "terminal-suite/screen-cell-access"
 
-(test screen-cell-read-returns-correct-cell
-  :description "screen-cell returns the cell at the specified (x, y) coordinate."
-  (with-screen (s 5 3)
-    (feed s "A")             ; writes 'A' at (0,0), cursor advances to (1,0)
-    (is (char= #\A (cell-char (screen-cell s 0 0)))
-        "cell at (0,0) must be A after feeding 'A'")))
+  ;; screen-cell returns the cell at the specified (x, y) coordinate.
+  (it "screen-cell-read-returns-correct-cell"
+    (with-screen (s 5 3)
+      (feed s "A")             ; writes 'A' at (0,0), cursor advances to (1,0)
+      (expect (char= #\A (cell-char (screen-cell s 0 0))))))
 
-(test setf-screen-cell-stores-cell-at-position
-  :description "setf screen-cell stores a cell at the given coordinates."
-  (with-screen (s 5 3)
-    (let ((new-cell (cl-tmux/terminal/types:make-cell :char #\Z :fg 3 :bg 1)))
-      (setf (screen-cell s 2 1) new-cell)
-      (let ((read-back (screen-cell s 2 1)))
-        (is (char= #\Z (cell-char read-back)) "stored char must be Z")
-        (is (= 3 (cell-fg  read-back))        "stored fg must be 3")
-        (is (= 1 (cell-bg  read-back))        "stored bg must be 1")))))
+  ;; setf screen-cell stores a cell at the given coordinates.
+  (it "setf-screen-cell-stores-cell-at-position"
+    (with-screen (s 5 3)
+      (let ((new-cell (cl-tmux/terminal/types:make-cell :char #\Z :fg 3 :bg 1)))
+        (setf (screen-cell s 2 1) new-cell)
+        (let ((read-back (screen-cell s 2 1)))
+          (expect (char= #\Z (cell-char read-back)))
+          (expect (= 3 (cell-fg  read-back)))
+          (expect (= 1 (cell-bg  read-back)))))))
 
-(test screen-cell-bottom-right-is-accessible
-  :description "The bottom-right cell (width-1, height-1) is accessible."
-  (with-screen (s 10 8)
-    (finishes (screen-cell s 9 7))))
+  ;; The bottom-right cell (width-1, height-1) is accessible.
+  (it "screen-cell-bottom-right-is-accessible"
+    (with-screen (s 10 8)
+      (finishes (screen-cell s 9 7))))
 
-;;; Table-driven grid-write tests: (x y char)
-(test screen-cell-write-read-table
-  :description "setf/screen-cell round-trip is correct at multiple grid positions."
-  (with-screen (s 10 5)
-    (dolist (case '((0 0 #\A "top-left corner")
-                    (9 0 #\B "top-right corner")
-                    (0 4 #\C "bottom-left corner")
-                    (9 4 #\D "bottom-right corner")
-                    (5 2 #\E "center")))
-      (destructuring-bind (x y ch desc) case
-        (setf (screen-cell s x y)
-              (cl-tmux/terminal/types:make-cell :char ch))
-        (is (char= ch (char-at s x y)) desc)))))
+  ;; Table-driven grid-write tests: (x y char)
+  ;; setf/screen-cell round-trip is correct at multiple grid positions.
+  (it "screen-cell-write-read-table"
+    (with-screen (s 10 5)
+      (dolist (case '((0 0 #\A "top-left corner")
+                      (9 0 #\B "top-right corner")
+                      (0 4 #\C "bottom-left corner")
+                      (9 4 #\D "bottom-right corner")
+                      (5 2 #\E "center")))
+        (destructuring-bind (x y ch desc) case
+          (declare (ignore desc))
+          (setf (screen-cell s x y)
+                (cl-tmux/terminal/types:make-cell :char ch))
+          (expect (char= ch (char-at s x y))))))))
 
 ;;; ── SUITE: cursor accessors ──────────────────────────────────────────────────
 
-(def-suite screen-cursor-accessors
-  :description "screen-cursor-x and screen-cursor-y track actual cursor position"
-  :in terminal-suite)
-(in-suite screen-cursor-accessors)
+(describe "terminal-suite/screen-cursor-accessors"
 
-(test screen-cursor-x-advances-after-write
-  :description "screen-cursor-x reflects cursor column after writing characters."
-  (with-screen (s 20 5)
-    (feed s "hello")
-    (is (= 5 (screen-cursor-x s))
-        "cursor-x must be 5 after writing 5 characters")))
+  ;; screen-cursor-x reflects cursor column after writing characters.
+  (it "screen-cursor-x-advances-after-write"
+    (with-screen (s 20 5)
+      (feed s "hello")
+      (expect (= 5 (screen-cursor-x s)))))
 
-(test screen-cursor-y-advances-after-newline
-  :description "screen-cursor-y reflects cursor row after a cursor positioning sequence."
-  (with-screen (s 20 5)
-    (feed s (esc "[3;5H"))   ; move cursor to row 2 (1-based 3), col 4
-    (is (= 2 (screen-cursor-y s))
-        "cursor-y must be 2 after CSI 3;5H (0-based row 2)")))
+  ;; screen-cursor-y reflects cursor row after a cursor positioning sequence.
+  (it "screen-cursor-y-advances-after-newline"
+    (with-screen (s 20 5)
+      (feed s (esc "[3;5H"))   ; move cursor to row 2 (1-based 3), col 4
+      (expect (= 2 (screen-cursor-y s)))))
 
-(test screen-cursor-x-starts-at-zero
-  :description "screen-cursor-x is 0 on a fresh screen."
-  (with-screen (s 20 5)
-    (is (= 0 (screen-cursor-x s)) "initial cursor-x must be 0")))
+  ;; screen-cursor-x is 0 on a fresh screen.
+  (it "screen-cursor-x-starts-at-zero"
+    (with-screen (s 20 5)
+      (expect (= 0 (screen-cursor-x s)))))
 
-(test screen-cursor-y-starts-at-zero
-  :description "screen-cursor-y is 0 on a fresh screen."
-  (with-screen (s 20 5)
-    (is (= 0 (screen-cursor-y s)) "initial cursor-y must be 0")))
+  ;; screen-cursor-y is 0 on a fresh screen.
+  (it "screen-cursor-y-starts-at-zero"
+    (with-screen (s 20 5)
+      (expect (= 0 (screen-cursor-y s))))))
 
 ;;; ── SUITE: resize ───────────────────────────────────────────────────────────
 
-(def-suite resize
-  :description "Screen resize behaviour"
-  :in terminal-suite)
-(in-suite resize)
+(describe "terminal-suite/resize"
 
-(test resize-larger
-  "Resizing to a larger screen preserves existing content and updates dimensions."
-  (with-screen (s 10 5)
-    (feed s "hello")
-    (screen-resize s 20 8)
-    (is (= 20 (screen-width  s)))
-    (is (= 8  (screen-height s)))
-    (is (string= "hello" (row-string s 0 :end 5)))))
+  ;; Resizing to a larger screen preserves existing content and updates dimensions.
+  (it "resize-larger"
+    (with-screen (s 10 5)
+      (feed s "hello")
+      (screen-resize s 20 8)
+      (expect (= 20 (screen-width  s)))
+      (expect (= 8  (screen-height s)))
+      (expect (string= "hello" (row-string s 0 :end 5)))))
 
-(test resize-smaller-clamps-cursor
-  "Shrinking the screen clamps an out-of-bounds cursor into the new bounds."
-  (with-screen (s 20 10)
-    (feed s (esc "[10;20H"))  ; cursor near bottom-right
-    (screen-resize s 5 3)
-    (is (<= (screen-cursor-x s) 4)
-        "cursor-x ~D exceeds new width-1=4" (screen-cursor-x s))
-    (is (<= (screen-cursor-y s) 2)
-        "cursor-y ~D exceeds new height-1=2" (screen-cursor-y s))))
+  ;; Shrinking the screen clamps an out-of-bounds cursor into the new bounds.
+  (it "resize-smaller-clamps-cursor"
+    (with-screen (s 20 10)
+      (feed s (esc "[10;20H"))  ; cursor near bottom-right
+      (screen-resize s 5 3)
+      (expect (<= (screen-cursor-x s) 4))
+      (expect (<= (screen-cursor-y s) 2))))
 
-(test resize-noop
-  "Resizing to the same dimensions leaves content and cursor unchanged."
-  (with-screen (s 10 5)
-    (feed s "abc")
-    (let ((cx (screen-cursor-x s))
-          (cy (screen-cursor-y s)))
-      (screen-resize s 10 5)
-      (is (string= "abc" (row-string s 0 :end 3)))
-      (is (= cx (screen-cursor-x s)))
-      (is (= cy (screen-cursor-y s))))))
+  ;; Resizing to the same dimensions leaves content and cursor unchanged.
+  (it "resize-noop"
+    (with-screen (s 10 5)
+      (feed s "abc")
+      (let ((cx (screen-cursor-x s))
+            (cy (screen-cursor-y s)))
+        (screen-resize s 10 5)
+        (expect (string= "abc" (row-string s 0 :end 3)))
+        (expect (= cx (screen-cursor-x s)))
+        (expect (= cy (screen-cursor-y s))))))
 
-(test resize-updates-scroll-region-to-full-height
-  :description "After resize, the scroll region spans the full new height."
-  (with-screen (s 10 10)
-    ;; Set a narrow scroll region first
-    (setf (cl-tmux/terminal/types:screen-scroll-top    s) 2
-          (cl-tmux/terminal/types:screen-scroll-bottom s) 7)
-    (screen-resize s 10 15)
-    (is (= 0  (cl-tmux/terminal/types:screen-scroll-top    s))
-        "scroll-top must be reset to 0 after resize")
-    (is (= 14 (cl-tmux/terminal/types:screen-scroll-bottom s))
-        "scroll-bottom must be reset to new-height-1 after resize")))
+  ;; After resize, the scroll region spans the full new height.
+  (it "resize-updates-scroll-region-to-full-height"
+    (with-screen (s 10 10)
+      ;; Set a narrow scroll region first
+      (setf (cl-tmux/terminal/types:screen-scroll-top    s) 2
+            (cl-tmux/terminal/types:screen-scroll-bottom s) 7)
+      (screen-resize s 10 15)
+      (expect (= 0  (cl-tmux/terminal/types:screen-scroll-top    s)))
+      (expect (= 14 (cl-tmux/terminal/types:screen-scroll-bottom s)))))
 
-(test resize-marks-screen-dirty
-  :description "screen-resize always marks the screen dirty."
-  (with-screen (s 10 5)
-    (screen-clear-dirty s)
-    (is-false (cl-tmux/terminal/types:screen-dirty-p s) "pre-condition: not dirty")
-    (screen-resize s 20 8)
-    (is-true (cl-tmux/terminal/types:screen-dirty-p s)
-             "screen must be dirty after resize")))
+  ;; screen-resize always marks the screen dirty.
+  (it "resize-marks-screen-dirty"
+    (with-screen (s 10 5)
+      (screen-clear-dirty s)
+      (expect (cl-tmux/terminal/types:screen-dirty-p s) :to-be-falsy)
+      (screen-resize s 20 8)
+      (expect (cl-tmux/terminal/types:screen-dirty-p s) :to-be-truthy)))
 
-(test resize-smaller-preserves-top-left-content
-  :description "Resizing smaller keeps the overlapping top-left region of content."
-  (with-screen (s 10 5)
-    (feed s "ABCDE")
-    (screen-resize s 3 3)
-    ;; Columns 0-2 of row 0 should have A, B, C
-    (is (char= #\A (char-at s 0 0)) "cell (0,0) must be A after shrink")
-    (is (char= #\B (char-at s 1 0)) "cell (1,0) must be B after shrink")
-    (is (char= #\C (char-at s 2 0)) "cell (2,0) must be C after shrink")))
+  ;; Resizing smaller keeps the overlapping top-left region of content.
+  (it "resize-smaller-preserves-top-left-content"
+    (with-screen (s 10 5)
+      (feed s "ABCDE")
+      (screen-resize s 3 3)
+      ;; Columns 0-2 of row 0 should have A, B, C
+      (expect (char= #\A (char-at s 0 0)))
+      (expect (char= #\B (char-at s 1 0)))
+      (expect (char= #\C (char-at s 2 0)))))
 
-(test copy-overlapping-cells-copies-top-left-rectangle
-  :description "%copy-overlapping-cells copies only the requested top-left
-   COPY-COLS x COPY-ROWS rectangle from OLD-CELLS into SCREEN's current grid,
-   leaving cells outside that rectangle untouched."
-  (with-screen (s 4 4)
-    (let ((old-width 3)
-          (old-cells (cl-tmux/terminal/types:%make-blank-cells 9)))
-      ;; Old grid (3x3, row-major): "ABC" / "DEF" / "GHI"
-      (loop for i from 0
-            for ch across "ABCDEFGHI"
-            do (setf (aref old-cells i)
-                     (cl-tmux/terminal/types:make-cell :char ch)))
-      (cl-tmux/terminal/types::%copy-overlapping-cells s old-cells old-width 2 2)
-      (is (char= #\A (char-at s 0 0)) "copied cell (0,0) must be A")
-      (is (char= #\B (char-at s 1 0)) "copied cell (1,0) must be B")
-      (is (char= #\D (char-at s 0 1)) "copied cell (0,1) must be D")
-      (is (char= #\E (char-at s 1 1)) "copied cell (1,1) must be E")
-      (is (char= #\Space (char-at s 2 0))
-          "cell (2,0) outside the 2x2 copy rectangle must remain blank")
-      (is (char= #\Space (char-at s 0 2))
-          "cell (0,2) outside the 2x2 copy rectangle must remain blank"))))
+  ;; %copy-overlapping-cells copies only the requested top-left
+  ;; COPY-COLS x COPY-ROWS rectangle from OLD-CELLS into SCREEN's current grid,
+  ;; leaving cells outside that rectangle untouched.
+  (it "copy-overlapping-cells-copies-top-left-rectangle"
+    (with-screen (s 4 4)
+      (let ((old-width 3)
+            (old-cells (cl-tmux/terminal/types:%make-blank-cells 9)))
+        ;; Old grid (3x3, row-major): "ABC" / "DEF" / "GHI"
+        (loop for i from 0
+              for ch across "ABCDEFGHI"
+              do (setf (aref old-cells i)
+                       (cl-tmux/terminal/types:make-cell :char ch)))
+        (cl-tmux/terminal/types::%copy-overlapping-cells s old-cells old-width 2 2)
+        (expect (char= #\A (char-at s 0 0)))
+        (expect (char= #\B (char-at s 1 0)))
+        (expect (char= #\D (char-at s 0 1)))
+        (expect (char= #\E (char-at s 1 1)))
+        (expect (char= #\Space (char-at s 2 0)))
+        (expect (char= #\Space (char-at s 0 2))))))
 
-(test resize-with-active-alt-cells-leaves-primary-intact
-  :description "Resizing while alt-cells is active resizes the primary grid only.
-   Alt-cells remain at their previous geometry; the caller is responsible for
-   exiting alt-screen mode before resizing when consistency is required."
-  (with-screen (s 10 5)
-    ;; Enter alt-screen: alt-cells is saved, a fresh grid is installed.
-    (feed s (esc "[?1049h"))
-    ;; Write something on the alt screen so the primary is non-trivial.
-    (feed s "ALT")
-    ;; Resize while on the alt screen.
-    (screen-resize s 20 8)
-    ;; Dimensions must reflect the new geometry.
-    (is (= 20 (screen-width  s)) "width must update to 20")
-    (is (= 8  (screen-height s)) "height must update to 8")
-    ;; Cursor must be clamped to new bounds.
-    (is (<= (screen-cursor-x s) 19))
-    (is (<= (screen-cursor-y s) 7))
-    ;; The alt-cells vector is still present (we did not exit alt-screen).
-    (is-true (cl-tmux/terminal/types:screen-alt-cells s)
-             "alt-cells must still be set after resize")))
-
+  ;; Resizing while alt-cells is active resizes the primary grid only.
+  ;; Alt-cells remain at their previous geometry; the caller is responsible for
+  ;; exiting alt-screen mode before resizing when consistency is required.
+  (it "resize-with-active-alt-cells-leaves-primary-intact"
+    (with-screen (s 10 5)
+      ;; Enter alt-screen: alt-cells is saved, a fresh grid is installed.
+      (feed s (esc "[?1049h"))
+      ;; Write something on the alt screen so the primary is non-trivial.
+      (feed s "ALT")
+      ;; Resize while on the alt screen.
+      (screen-resize s 20 8)
+      ;; Dimensions must reflect the new geometry.
+      (expect (= 20 (screen-width  s)))
+      (expect (= 8  (screen-height s)))
+      ;; Cursor must be clamped to new bounds.
+      (expect (<= (screen-cursor-x s) 19))
+      (expect (<= (screen-cursor-y s) 7))
+      ;; The alt-cells vector is still present (we did not exit alt-screen).
+      (expect (cl-tmux/terminal/types:screen-alt-cells s) :to-be-truthy))))

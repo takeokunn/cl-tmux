@@ -31,7 +31,7 @@
   "Apply a global set-environment directive to the process environment."
   (when var-name
     (if remove-p
-        (let ((fn (%config-posix-fn "UNSETENV")))
+        (let ((fn (find-posix-function "UNSETENV")))
           (when fn (ignore-errors (funcall fn var-name))))
         (when var-value
           (%config-setenv var-name var-value)))

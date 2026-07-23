@@ -53,11 +53,17 @@ Initial public development. Highlights of what the tree contains today:
     `-h`, `-l`, `-u`, `-v`, verified against `man 1 tmux`) in any order, fixing
     a real bug where a flag before `-C`/`-V` (e.g. `cl-tmux -L sock -C`) used
     to hard-fail with a usage error.
-  - [`cl-tty-kit`](https://github.com/nerima-lisp/cl-tty-kit) —
-    `rgb-to-256` downsamples true-colour SGR output to the 256-colour palette
-    when `-2` is given (`renderer-format.lisp` `*color-downsample-fn*`), the
-    first cl-tmux terminal-capability negotiation beyond emitting whatever a
-    style asks for unconditionally.
+  - [`cl-tty-kit`](https://github.com/nerima-lisp/cl-tty-kit) — now backs the
+    whole PTY layer: pane spawn, byte-transparent master-fd read/write, raw
+    mode, and terminal-size queries delegate to it
+    (`src/infrastructure/pty/`), replacing cl-tmux's own termios implementation
+    (`pty-rawmode.lisp`, now a thin cl-tty-kit wrapper) and the `%read`/`%write`
+    CFFI. cl-tmux keeps its own
+    `select(2)` fd-multiplexing loop, SIGHUP `pty-close`, and `set-pty-size`
+    ioctl on top. Separately, `rgb-to-256` downsamples true-colour SGR output
+    to the 256-colour palette when `-2` is given (`renderer-format.lisp`
+    `*color-downsample-fn*`), the first cl-tmux terminal-capability negotiation
+    beyond emitting whatever a style asks for unconditionally.
   - [`cl-boundary-kit`](https://github.com/nerima-lisp/cl-boundary-kit) — a
     process boundary (`cl-tmux/config:*process-boundary*`) now sits behind
     every `run-shell` / `if-shell` subprocess call (config-time and

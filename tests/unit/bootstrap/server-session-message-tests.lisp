@@ -2,136 +2,117 @@
 
 ;;;; session group, message dispatch, and client size edge cases
 
-(in-suite server-suite)
+(describe "server-suite"
 
-;;; -- session group helpers --------------------------------------------------
+  ;;; -- session group helpers --------------------------------------------------
 
-(test next-group-id-monotonically-increases
-  :description "%next-group-id returns strictly increasing ids on successive calls."
-  (let ((cl-tmux::*group-id-counter* 0))
-    (let ((id1 (cl-tmux::%next-group-id))
-          (id2 (cl-tmux::%next-group-id))
-          (id3 (cl-tmux::%next-group-id)))
-      (is (< id1 id2) "second id must be greater than first")
-      (is (< id2 id3) "third id must be greater than second"))))
+  ;; %next-group-id returns strictly increasing ids on successive calls.
+  (it "next-group-id-monotonically-increases"
+    (let ((cl-tmux::*group-id-counter* 0))
+      (let ((id1 (cl-tmux::%next-group-id))
+            (id2 (cl-tmux::%next-group-id))
+            (id3 (cl-tmux::%next-group-id)))
+        (expect (< id1 id2))
+        (expect (< id2 id3)))))
 
-(test resolve-group-id-allocates-for-ungrouped-session
-  :description "%resolve-group-id allocates a fresh group-id for a session without one."
-  (let ((cl-tmux::*group-id-counter* 0)
-        (sess (make-session :id 1 :name "ungrouped" :windows nil)))
-    (let ((gid (cl-tmux::%resolve-group-id sess)))
-      (is (integerp gid)  "%resolve-group-id must return an integer")
-      (is (plusp gid)     "%resolve-group-id must return a positive id")
-      (is (= gid (session-group sess))
-          "session-group slot must be set to the allocated gid"))))
+  ;; %resolve-group-id allocates a fresh group-id for a session without one.
+  (it "resolve-group-id-allocates-for-ungrouped-session"
+    (let ((cl-tmux::*group-id-counter* 0)
+          (sess (make-session :id 1 :name "ungrouped" :windows nil)))
+      (let ((gid (cl-tmux::%resolve-group-id sess)))
+        (expect (integerp gid))
+        (expect (plusp gid))
+        (expect (= gid (session-group sess))))))
 
-(test resolve-group-id-reuses-existing-id
-  :description "%resolve-group-id returns the existing group-id for an already-grouped session."
-  (let ((cl-tmux::*group-id-counter* 0)
-        (sess (make-session :id 1 :name "grouped" :windows nil)))
-    (setf (session-group sess) 77)
-    (let ((gid (cl-tmux::%resolve-group-id sess)))
-      (is (= 77 gid)
-          "%resolve-group-id must return the existing group-id 77"))))
+  ;; %resolve-group-id returns the existing group-id for an already-grouped session.
+  (it "resolve-group-id-reuses-existing-id"
+    (let ((cl-tmux::*group-id-counter* 0)
+          (sess (make-session :id 1 :name "grouped" :windows nil)))
+      (setf (session-group sess) 77)
+      (let ((gid (cl-tmux::%resolve-group-id sess)))
+        (expect (= 77 gid)))))
 
-(test link-session-to-group-shares-windows
-  :description "%link-session-to-group copies existing-session's windows into new-session."
-  (let* ((w1  (make-fake-window 1 "w1"))
-         (existing (make-session :id 1 :name "existing" :windows (list w1)))
-         (new-sess (make-session :id 2 :name "new"      :windows nil)))
-    (session-select-window existing w1)
-    (cl-tmux::%link-session-to-group new-sess existing 42)
-    (is (equal (session-windows existing) (session-windows new-sess))
-        "new-session must share the same windows list as existing-session")
-    (is (= 42 (session-group new-sess))
-        "new-session group slot must be set to the supplied group-id")))
-
-(test register-in-group-alist-creates-new-entry
-  :description "%register-in-group-alist adds a new entry when the group-id is not in the alist."
-  (let ((cl-tmux::*session-groups* nil)
-        (sess (make-session :id 1 :name "s" :windows nil)))
-    (cl-tmux::%register-in-group-alist sess 10)
-    (let ((entry (assoc 10 cl-tmux::*session-groups*)))
-      (is-true entry "alist must have an entry for group-id 10")
-      (is-true (member sess (cdr entry))
-               "session must be in the group-id 10 entry"))))
-
-(test register-in-group-alist-pushes-to-existing
-  :description "%register-in-group-alist adds to an existing entry without duplicating it."
-  (let* ((s1   (make-session :id 1 :name "s1" :windows nil))
-         (s2   (make-session :id 2 :name "s2" :windows nil))
-         (cl-tmux::*session-groups* (list (list 10 s1))))
-    (cl-tmux::%register-in-group-alist s2 10)
-    (let ((entry (assoc 10 cl-tmux::*session-groups*)))
-      (is-true (member s2 (cdr entry)) "s2 must be in the existing group-10 entry")
-      (is-true (member s1 (cdr entry)) "s1 must still be in the group-10 entry"))))
-
-(test server-new-session-in-group-shares-windows
-  :description "server-new-session-in-group wires both sessions into the same group."
-  (let ((cl-tmux::*session-groups* nil)
-        (cl-tmux::*group-id-counter* 0))
-    (let* ((w1 (make-fake-window 1 "w1"))
+  ;; %link-session-to-group copies existing-session's windows into new-session.
+  (it "link-session-to-group-shares-windows"
+    (let* ((w1  (make-fake-window 1 "w1"))
            (existing (make-session :id 1 :name "existing" :windows (list w1)))
-           (new-sess (make-session :id 2 :name "new-sess" :windows nil)))
+           (new-sess (make-session :id 2 :name "new"      :windows nil)))
       (session-select-window existing w1)
-      (server-new-session-in-group new-sess existing)
-      (is (equal (session-windows existing) (session-windows new-sess))
-          "new-session must share the same windows as existing-session")
-      (is (= (session-group existing) (session-group new-sess))
-          "both sessions must have the same group-id after server-new-session-in-group"))))
+      (cl-tmux::%link-session-to-group new-sess existing 42)
+      (expect (equal (session-windows existing) (session-windows new-sess)))
+      (expect (= 42 (session-group new-sess)))))
 
-;;; -- %handle-client-message dispatch ----------------------------------------
-;;;
-;;; %handle-client-message is generated by define-msg-dispatch. These tests
-;;; verify the four rule arms without requiring a live socket.
+  ;; %register-in-group-alist adds a new entry when the group-id is not in the alist.
+  (it "register-in-group-alist-creates-new-entry"
+    (let ((cl-tmux::*session-groups* nil)
+          (sess (make-session :id 1 :name "s" :windows nil)))
+      (cl-tmux::%register-in-group-alist sess 10)
+      (let ((entry (assoc 10 cl-tmux::*session-groups*)))
+        (expect entry :to-be-truthy)
+        (expect (member sess (cdr entry)) :to-be-truthy))))
 
-(test handle-client-message-simple-returns-table
-  "%handle-client-message returns :disconnect for NIL/unknown types and :detach for +msg-detach+."
-  (dolist (row `((nil          :disconnect "NIL type -> :disconnect")
-                 (,+msg-detach+ :detach    "+msg-detach+ -> :detach")
-                 (9999          :disconnect "unknown type -> :disconnect")))
-    (destructuring-bind (msg-type expected desc) row
-      (with-fake-session (s)
-        (let ((state (cl-tmux::make-input-state)))
-          (is (eq expected (cl-tmux::%handle-client-message msg-type #() s state))
-              "~A" desc))))))
+  ;; %register-in-group-alist adds to an existing entry without duplicating it.
+  (it "register-in-group-alist-pushes-to-existing"
+    (let* ((s1   (make-session :id 1 :name "s1" :windows nil))
+           (s2   (make-session :id 2 :name "s2" :windows nil))
+           (cl-tmux::*session-groups* (list (list 10 s1))))
+      (cl-tmux::%register-in-group-alist s2 10)
+      (let ((entry (assoc 10 cl-tmux::*session-groups*)))
+        (expect (member s2 (cdr entry)) :to-be-truthy)
+        (expect (member s1 (cdr entry)) :to-be-truthy))))
 
-(test handle-client-message-resize-returns-nil-and-marks-dirty
-  :description "%handle-client-message +msg-resize+ resizes the session and marks *dirty*."
-  (with-fake-session (s)
-    (with-server-size-state ()
-      (multiple-value-bind (_type payload) (decode-frame (msg-resize 30 100))
-        (declare (ignore _type))
-        (let ((result (cl-tmux::%handle-client-message +msg-resize+ payload s
-                                                         (cl-tmux::make-input-state))))
-          (is (null result) "+msg-resize+ must return NIL (continue serving)")
-          (is-true cl-tmux::*dirty* "+msg-resize+ must set *dirty*")
-          (is (= 30 cl-tmux::*term-rows*) "rows must update to 30")
-          (is (= 100 cl-tmux::*term-cols*) "cols must update to 100"))))))
+  ;; server-new-session-in-group wires both sessions into the same group.
+  (it "server-new-session-in-group-shares-windows"
+    (let ((cl-tmux::*session-groups* nil)
+          (cl-tmux::*group-id-counter* 0))
+      (let* ((w1 (make-fake-window 1 "w1"))
+             (existing (make-session :id 1 :name "existing" :windows (list w1)))
+             (new-sess (make-session :id 2 :name "new-sess" :windows nil)))
+        (session-select-window existing w1)
+        (server-new-session-in-group new-sess existing)
+        (expect (equal (session-windows existing) (session-windows new-sess)))
+        (expect (= (session-group existing) (session-group new-sess))))))
 
-;;; -- handle-client-message +msg-attach+ arm ---------------------------------
+  ;;; -- %handle-client-message dispatch ----------------------------------------
+  ;;;
+  ;;; %handle-client-message is generated by define-msg-dispatch. These tests
+  ;;; verify the four rule arms without requiring a live socket.
 
-(test handle-client-message-attach-applies-size-and-marks-dirty
-  :description "%handle-client-message +msg-attach+ applies client dimensions and marks *dirty*."
-  (with-fake-session (s)
-    (with-server-size-state ()
-      (multiple-value-bind (_type payload) (decode-frame (msg-attach 40 120))
-        (declare (ignore _type))
-        (let ((result (cl-tmux::%handle-client-message +msg-attach+ payload s
-                                                         (cl-tmux::make-input-state))))
-          (is (null result) "+msg-attach+ must return NIL (continue serving)")
-          (is-true cl-tmux::*dirty* "+msg-attach+ must set *dirty*")
-          (is (= 40 cl-tmux::*term-rows*) "rows must update from attach payload")
-          (is (= 120 cl-tmux::*term-cols*) "cols must update from attach payload"))))))
+  ;; %handle-client-message returns :disconnect for NIL/unknown types and :detach for +msg-detach+.
+  (it "handle-client-message-simple-returns-table"
+    (dolist (row `((nil          :disconnect "NIL type -> :disconnect")
+                   (,+msg-detach+ :detach    "+msg-detach+ -> :detach")
+                   (9999          :disconnect "unknown type -> :disconnect")))
+      (destructuring-bind (msg-type expected desc) row
+        (declare (ignore desc))
+        (with-fake-session (s)
+          (let ((state (cl-tmux::make-input-state)))
+            (expect (eq expected (cl-tmux::%handle-client-message msg-type #() s state))))))))
 
-;;; -- apply-client-size with no active window --------------------------------
+  ;; %handle-client-message +msg-resize+ resizes the session and marks *dirty*.
+  (it "handle-client-message-resize-returns-nil-and-marks-dirty"
+    (with-fake-session (s)
+      (with-server-size-state ()
+        (multiple-value-bind (_type payload) (decode-frame (msg-resize 30 100))
+          (declare (ignore _type))
+          (let ((result (cl-tmux::%handle-client-message +msg-resize+ payload s
+                                                           (cl-tmux::make-input-state))))
+            (expect (null result))
+            (expect cl-tmux::*dirty* :to-be-truthy)
+            (expect (= 30 cl-tmux::*term-rows*))
+            (expect (= 100 cl-tmux::*term-cols*)))))))
 
-(test apply-client-size-nil-active-window-updates-dimensions-only
-  :description "apply-client-size is safe when the session has no active window: it still updates *term-rows*/*term-cols* without signalling."
-  (let ((s (make-session :id 1 :name "empty" :windows nil)))
-    (with-server-size-state ()
-      (multiple-value-bind (_type payload) (decode-frame (msg-resize 20 60))
-        (declare (ignore _type))
-        (finishes (cl-tmux::apply-client-size s payload))
-        (is (= 20 cl-tmux::*term-rows*) "rows updated even with nil active window")
-        (is (= 60 cl-tmux::*term-cols*) "cols updated even with nil active window")))))
+  ;;; -- handle-client-message +msg-attach+ arm ---------------------------------
+
+  ;; %handle-client-message +msg-attach+ applies client dimensions and marks *dirty*.
+  (it "handle-client-message-attach-applies-size-and-marks-dirty"
+    (with-fake-session (s)
+      (with-server-size-state ()
+        (multiple-value-bind (_type payload) (decode-frame (msg-attach 40 120))
+          (declare (ignore _type))
+          (let ((result (cl-tmux::%handle-client-message +msg-attach+ payload s
+                                                           (cl-tmux::make-input-state))))
+            (expect (null result))
+            (expect cl-tmux::*dirty* :to-be-truthy)
+            (expect (= 40 cl-tmux::*term-rows*))
+            (expect (= 120 cl-tmux::*term-cols*))))))))

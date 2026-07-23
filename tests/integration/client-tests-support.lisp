@@ -14,18 +14,15 @@
 ;;;;
 ;;;; Server-frame receive/decode behavior lives in client-receive-tests.lisp.
 
-(def-suite client-suite :description "Client connect/detach lifecycle")
-(in-suite client-suite)
+(describe "client-suite"
 
-;;; ── Function existence ───────────────────────────────────────────────────────
-
-(test client-functions-fbound-table
-  :description "All key client mode functions are fbound."
-  (dolist (sym '(cl-tmux::run-client
-                 cl-tmux::%ensure-server-running
-                 cl-tmux::run-attach-simple
-                 cl-tmux::run-attach-with-flags))
-    (is (fboundp sym) "~A must be fbound" sym)))
+  ;; All key client mode functions are fbound.
+  (it "client-functions-fbound-table"
+    (dolist (sym '(cl-tmux::run-client
+                   cl-tmux::%ensure-server-running
+                   cl-tmux::run-attach-simple
+                   cl-tmux::run-attach-with-flags))
+      (expect (fboundp sym)))))
 
 ;;; socket-path naming is tested canonically in server-tests.lisp since
 ;;; socket-path is defined in server.lisp.  No duplicate tests here.

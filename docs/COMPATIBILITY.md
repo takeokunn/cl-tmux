@@ -51,9 +51,10 @@ is deliberately different, and where the remaining risk lives.
   command, but its exact semantics could not be verified against upstream
   docs at the time; implementing wrong semantics was judged worse than
   absence. Re-check when upstream documentation is reachable.
-- **SBCL-specific process model.** PTYs come from `sb-ext:run-program`
-  rather than `forkpty(3)`, so the slave path is not exposed (reported as an
-  empty string where tmux would report a device path).
+- **SBCL-specific process model.** PTYs are spawned via `cl-tty-kit:make-pty`
+  (which uses `sb-ext:run-program :pty t`) rather than `forkpty(3)`, so the
+  slave path is not exposed (reported as an empty string where tmux would
+  report a device path).
 
 ## Known remaining risk
 

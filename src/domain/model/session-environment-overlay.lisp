@@ -6,12 +6,10 @@
 ;;; strings, validating names, and reading/writing the session's overlay tables.
 
 ;;; ── NAME=VALUE string pair helpers ──────────────────────────────────────────
-
-(defun %environment-entry-name (entry)
-  "Return the NAME component of a NAME=VALUE environment ENTRY string, or NIL."
-  (let ((eq-pos (position #\= entry)))
-    (when eq-pos
-      (subseq entry 0 eq-pos))))
+;;;
+;;; %ENVIRONMENT-ENTRY-NAME lives in session-environment-process.lisp (loaded
+;;; before this file, and itself a caller) rather than here, to avoid the two
+;;; files each defining an identical name-parsing helper.
 
 (defun %environment-entry-value (entry)
   "Return the VALUE component of a NAME=VALUE environment ENTRY string, or NIL."

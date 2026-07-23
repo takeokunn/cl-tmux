@@ -107,23 +107,33 @@
                (or (null extra-guard) (funcall extra-guard)))
       (copy-mode-exit screen))))
 
-(defun copy-mode-scroll-down-and-cancel (screen)
-  "send-keys -X scroll-down-and-cancel: scroll the viewport down one line, then
-   exit copy mode when the live bottom (scroll-offset 0) is reached."
-  (%copy-mode-with-cancel-at-bottom
-   screen (lambda () (copy-mode-scroll screen -1))))
+(defmacro define-copy-mode-cancel-commands (&rest rules)
+  "Generate one copy-mode scroll-then-maybe-exit defun per rule.
+   Each RULE is (function-name docstring scroll-expression).
+   The generated function delegates to %COPY-MODE-WITH-CANCEL-AT-BOTTOM,
+   running SCROLL-EXPRESSION as the action thunk."
+  `(progn
+     ,@(mapcar (lambda (rule)
+                 (destructuring-bind (name docstring scroll-expr) rule
+                   `(defun ,name (screen)
+                      ,docstring
+                      (%copy-mode-with-cancel-at-bottom
+                       screen (lambda () ,scroll-expr)))))
+               rules)))
 
-(defun copy-mode-page-down-and-cancel (screen)
-  "send-keys -X page-down-and-cancel: scroll one full page down, then exit copy
-   mode when the live bottom is reached."
-  (%copy-mode-with-cancel-at-bottom
-   screen (lambda () (copy-mode-scroll screen (- (screen-height screen))))))
-
-(defun copy-mode-half-page-down-and-cancel (screen)
-  "send-keys -X halfpage-down-and-cancel: scroll half a page down, then exit
-   copy mode when the live bottom is reached."
-  (%copy-mode-with-cancel-at-bottom
-   screen (lambda () (copy-mode-half-page-down screen))))
+(define-copy-mode-cancel-commands
+  (copy-mode-scroll-down-and-cancel
+   "send-keys -X scroll-down-and-cancel: scroll the viewport down one line, then
+    exit copy mode when the live bottom (scroll-offset 0) is reached."
+   (copy-mode-scroll screen -1))
+  (copy-mode-page-down-and-cancel
+   "send-keys -X page-down-and-cancel: scroll one full page down, then exit copy
+    mode when the live bottom is reached."
+   (copy-mode-scroll screen (- (screen-height screen))))
+  (copy-mode-half-page-down-and-cancel
+   "send-keys -X halfpage-down-and-cancel: scroll half a page down, then exit
+    copy mode when the live bottom is reached."
+   (copy-mode-half-page-down screen)))
 
 (defun %copy-mode-cursor-absolute (screen)
   "The copy cursor's absolute row index (stream position): history base +

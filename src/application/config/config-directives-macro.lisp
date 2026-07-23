@@ -22,7 +22,7 @@
 ;;; cl-tmux so it may not be loaded when this file first loads, but it IS loaded
 ;;; before any runtime or test caller reaches these functions.
 
-(defun %config-posix-fn (name)
+(defun find-posix-function (name)
   "Return the SB-POSIX function named NAME (by call-time find-symbol), or NIL
    when SB-POSIX is absent or the function is not exported.  Defers the lookup
    so the defvar-at-load-time NIL trap is avoided."
@@ -32,7 +32,7 @@
 (defun %config-setenv (name value)
   "Set environment variable NAME to VALUE for child processes.
    Looks up SB-POSIX:SETENV lazily.  A no-op when sb-posix is absent."
-  (let ((fn (%config-posix-fn "SETENV")))
+  (let ((fn (find-posix-function "SETENV")))
     (when fn (ignore-errors (funcall fn name value 1)))))
 
 ;;; ── run-shell tilde expansion helper ─────────────────────────────────────────

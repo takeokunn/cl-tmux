@@ -49,10 +49,8 @@
              (before-active ,active-form))
          (cl-tmux::%run-command-line ,session-var ,command)
          (let ((after-count ,count-form))
-           (is (> after-count before-count)
-               ,count-context))
-         (is (eq before-active ,active-form)
-             ,focus-context)
+           (expect (> after-count before-count)))
+         (expect (eq before-active ,active-form))
          ,@body))))
 
 (defmacro with-pty-command-increasing-count ((session-spec command &key count-form count-context)
@@ -63,8 +61,7 @@
     `(with-pty-session (,session-var ,@session-args)
        (let ((before-count ,count-form))
          (cl-tmux::%run-command-line ,session-var ,command)
-         (is (> ,count-form before-count)
-             ,count-context)
+         (expect (> ,count-form before-count))
          ,@body))))
 
 (defun %forkpty-with-retry (rows cols &key (attempts 3))

@@ -140,49 +140,51 @@
      a new one (with -d, do nothing); matches tmux new-window -S."
   (with-command-flags+pos (flags positionals args "ntceF")
     (declare (ignore positionals))
-    (let* ((extra-env  (%collect-env-flags flags))
-           (name       (%flag-value flags #\n))
-           (select-p   (%flag-present-p flags #\S))
-           (detach-p   (%flag-present-p flags #\d))
-           (kill-p     (%flag-present-p flags #\k))
-           (print-p    (%flag-present-p flags #\P))
-           (print-fmt  (%flag-value flags #\F))
-           (after-p    (%flag-present-p flags #\a))
-           (before-p   (%flag-present-p flags #\b))
-           ;; -c overrides; else fall back to the session working directory
-           ;; (attach-session/new-session -c), matching tmux's new-window default.
-           (raw-dir    (or (%flag-value flags #\c)
-                           (session-start-directory session)))
-           (start-dir  (%expand-start-dir session raw-dir))
-           (at-idx     (%parse-flag-int flags #\t)))
-      ;; -S: if a window already has the -n name, select it instead of creating.
-      (when (and select-p name)
-        (let ((existing (find name (session-windows session)
-                              :key #'window-name :test #'string=)))
-          (when existing
-            (unless detach-p
-              (session-select-window session existing)
-              (setf *dirty* t))
-            (return-from %cmd-new-window-arg existing))))
-      ;; -k: if a window with the target index already exists, kill it first.
-      (when (and kill-p at-idx)
-        (let ((existing (find at-idx (session-windows session) :key #'window-id)))
-          (when existing
-            (%handle-kill-result (kill-window session existing)))))
-      ;; Inject -e VAR=val pairs via *pane-extra-env* so %fork-pane picks them up.
-      (when extra-env
-        (setf *pane-extra-env* extra-env))
-      (let ((new-win (%cmd-new-window session
-                                      :name name
-                                      :start-dir start-dir
-                                      :detach (and detach-p t)
-                                      :at-index at-idx
-                                      :after-current (and after-p t)
-                                      :before-current (and before-p t))))
-        ;; -P: print new pane details to overlay.
-        (when (and print-p new-win)
-          (%show-pane-info-overlay session new-win (window-active-pane new-win) print-fmt))
-        new-win))))
+    (flet ((%kill-existing-window-at-index (kill-p at-idx session)
+             (when (and kill-p at-idx)
+               (let ((existing (find at-idx (session-windows session) :key #'window-id)))
+                 (when existing
+                   (%handle-kill-result (kill-window session existing)))))))
+      (let* ((extra-env  (%collect-env-flags flags))
+             (name       (%flag-value flags #\n))
+             (select-p   (%flag-present-p flags #\S))
+             (detach-p   (%flag-present-p flags #\d))
+             (kill-p     (%flag-present-p flags #\k))
+             (print-p    (%flag-present-p flags #\P))
+             (print-fmt  (%flag-value flags #\F))
+             (after-p    (%flag-present-p flags #\a))
+             (before-p   (%flag-present-p flags #\b))
+             ;; -c overrides; else fall back to the session working directory
+             ;; (attach-session/new-session -c), matching tmux's new-window default.
+             (raw-dir    (or (%flag-value flags #\c)
+                             (session-start-directory session)))
+             (start-dir  (%expand-start-dir session raw-dir))
+             (at-idx     (%parse-flag-int flags #\t)))
+        ;; -S: if a window already has the -n name, select it instead of creating.
+        (when (and select-p name)
+          (let ((existing (find name (session-windows session)
+                                :key #'window-name :test #'string=)))
+            (when existing
+              (unless detach-p
+                (session-select-window session existing)
+                (setf *dirty* t))
+              (return-from %cmd-new-window-arg existing))))
+        ;; -k: if a window with the target index already exists, kill it first.
+        (%kill-existing-window-at-index kill-p at-idx session)
+        ;; Inject -e VAR=val pairs via *pane-extra-env* so %fork-pane picks them up.
+        (when extra-env
+          (setf *pane-extra-env* extra-env))
+        (let ((new-win (%cmd-new-window session
+                                        :name name
+                                        :start-dir start-dir
+                                        :detach (and detach-p t)
+                                        :at-index at-idx
+                                        :after-current (and after-p t)
+                                        :before-current (and before-p t))))
+          ;; -P: print new pane details to overlay.
+          (when (and print-p new-win)
+            (%show-pane-info-overlay session new-win (window-active-pane new-win) print-fmt))
+          new-win)))))
 
 (defun %parse-split-size (lines-str)
   "Parse a split-window/-l value: \"30\" → 30 (absolute cells, an integer), \"30%\"

@@ -1,30 +1,6 @@
 (in-package #:cl-tmux/test)
 
-(in-suite main-suite)
-
 ;;;; Tests for CLI entry point reachability and command forwarding.
-
-;;; ── run-attach-simple and run-attach-with-flags reachability ─────────────────
-
-(test run-attach-simple-is-fbound
-  "run-attach-simple is defined as a function."
-  (is (fboundp 'cl-tmux::run-attach-simple)
-      "run-attach-simple must be fbound"))
-
-(test run-attach-with-flags-is-fbound
-  "run-attach-with-flags is defined as a function."
-  (is (fboundp 'cl-tmux::run-attach-with-flags)
-      "run-attach-with-flags must be fbound"))
-
-(test dispatch-control-mode-flag
-  "argv (cl-tmux -C) routes to run-control-mode."
-  (let ((called nil))
-    (with-stubbed-fdefinition
-        ((cl-tmux::run-control-mode
-          (lambda (&rest a) (declare (ignore a)) (setf called t))))
-      (let ((sb-ext:*posix-argv* (list "cl-tmux" "-C")))
-        (cl-tmux::main))
-      (is-true called "main with -C must call run-control-mode"))))
 
 ;;; ── Coverage: stub handler functions ─────────────────────────────────────────
 ;;;
@@ -62,130 +38,167 @@
            (lambda (name args) (setf ,forwarded-var (list name args)))))
        ,@body)))
 
-(test run-commands-exit-when-no-server
-  "Without a server, all client commands exit with code 1."
-  (dolist (row '((cl-tmux::run-kill-server         nil)
-                  (cl-tmux::run-list-sessions        nil)
-                  (cl-tmux::run-list-windows         nil)
-                  (cl-tmux::run-display-message      ("-p" "hello"))
-                  (cl-tmux::run-show-options         ("-g"))
-                  (cl-tmux::run-show-window-options  ("-g"))))
-    (destructuring-bind (fn args) row
-      (let (exit-code)
+(describe "main-suite"
+
+  ;;; ── run-attach-simple and run-attach-with-flags reachability ─────────────────
+
+  ;; run-attach-simple is defined as a function.
+  (it "run-attach-simple-is-fbound"
+    (expect (fboundp 'cl-tmux::run-attach-simple)))
+
+  ;; run-attach-with-flags is defined as a function.
+  (it "run-attach-with-flags-is-fbound"
+    (expect (fboundp 'cl-tmux::run-attach-with-flags)))
+
+  ;; argv (cl-tmux -C) routes to run-control-mode.
+  (it "dispatch-control-mode-flag"
+    (let ((called nil))
+      (with-stubbed-fdefinition
+          ((cl-tmux::run-control-mode
+            (lambda (&rest a) (declare (ignore a)) (setf called t))))
+        (let ((sb-ext:*posix-argv* (list "cl-tmux" "-C")))
+          (cl-tmux::main))
+        (expect called :to-be-truthy))))
+
+  ;; An unrecognised argv[0] (not a known startup mode, not a -flag) forwards
+  ;; to a live default-session server as a command client, rather than
+  ;; starting a standalone session — %dispatch-unknown-mode's middle branch,
+  ;; previously untested (only the dash-flag-usage-error and no-server
+  ;; standalone-fallback shapes are implied by other tests).
+  (it "dispatch-unknown-mode-forwards-to-live-server"
+    (with-temp-socket-path (path)
+      ;; %dispatch-unknown-mode only probes for the socket file's existence
+      ;; (the actual connection is delegated to run-command-client, stubbed
+      ;; below), so an empty file at PATH is enough to simulate "a server is
+      ;; already running".
+      (with-open-file (out path :direction :output :if-does-not-exist :create))
+      (let (forwarded (standalone-called nil))
+        (with-stubbed-fdefinition
+            ((cl-tmux::socket-path (lambda (name) (declare (ignore name)) path))
+             (cl-tmux::run-command-client
+              (lambda (name args) (setf forwarded (list name args))))
+             (cl-tmux::run-standalone
+              (lambda () (setf standalone-called t))))
+          ;; "rename-window" is not itself a *startup-modes* entry (unlike
+          ;; list-sessions/kill-server/etc., which main dispatches directly);
+          ;; it can only reach a live server as a forwarded command.
+          (let ((sb-ext:*posix-argv* (list "cl-tmux" "rename-window" "new-name")))
+            (cl-tmux::main))
+          (expect (equal (list "0" (list "rename-window" "new-name")) forwarded))
+          (expect (null standalone-called))))))
+
+  ;; Without a server, all client commands exit with code 1.
+  (it "run-commands-exit-when-no-server"
+    (dolist (row '((cl-tmux::run-kill-server         nil)
+                    (cl-tmux::run-list-sessions        nil)
+                    (cl-tmux::run-list-windows         nil)
+                    (cl-tmux::run-display-message      ("-p" "hello"))
+                    (cl-tmux::run-show-options         ("-g"))
+                    (cl-tmux::run-show-window-options  ("-g"))))
+      (destructuring-bind (fn args) row
+        (let (exit-code)
+          (with-stubbed-exit exit-code
+            (funcall fn args))
+          (expect (eql 1 exit-code))))))
+
+  ;; Commands forward their name and args to an existing server and exit cleanly.
+  (it "run-commands-forward-to-server"
+    (dolist (row '(("0"    cl-tmux::run-kill-server         ("-q")
+                            ("kill-server" "-q"))
+                    ("work" cl-tmux::run-list-sessions        ("-F" "#{session_name}")
+                            ("list-sessions" "-F" "#{session_name}"))
+                    ("work" cl-tmux::run-list-windows         ("-F" "#{window_name}")
+                            ("list-windows" "-F" "#{window_name}"))
+                    ("work" cl-tmux::run-display-message      ("-p" "hello")
+                            ("display-message" "-p" "hello"))
+                    ("work" cl-tmux::run-show-options         ("-g")
+                            ("show-options" "-g"))
+                    ("work" cl-tmux::run-show-window-options  ("-g")
+                            ("show-window-options" "-g"))))
+      (destructuring-bind (server fn args expected-fwd) row
+        (with-stubbed-server server (forwarded exit-code)
+          (with-stubbed-exit exit-code
+            (funcall fn args))
+          (expect (equal (list server expected-fwd) forwarded))
+          (expect (eql 0 exit-code))))))
+
+  ;; run-new-session preserves tmux flags by forwarding the full argv to the server.
+  (it "run-new-session-forwards-full-argv-when-server-exists"
+    (let ((forwarded nil)
+          (attached nil))
+      (with-stubbed-fdefinition
+          ((cl-tmux::%running-server-name
+            (lambda (&optional preferred) (declare (ignore preferred)) "0"))
+           (cl-tmux::run-command-client
+            (lambda (name args) (setf forwarded (list name args))))
+           (cl-tmux::run-client
+            (lambda (&rest args) (setf attached args))))
+        (cl-tmux::run-new-session '("-s" "work" "-n" "shell" "-c" "/tmp" "-d"))
+        (expect (equal '("0" ("new-session" "-s" "work" "-n" "shell" "-c" "/tmp" "-d"))
+                       forwarded))
+        (expect (null attached)))))
+
+  ;; run-new-session -s NAME creates a session in the existing server, not a new NAME socket.
+  (it "run-new-session-discovers-existing-server-before-session-name"
+    (let ((forwarded nil)
+          (ensured nil)
+          (probes '()))
+      (with-stubbed-fdefinition
+          ((cl-tmux::%running-server-name
+            (lambda (&optional preferred)
+              (push preferred probes)
+              (and (null preferred) "alpha")))
+           (cl-tmux::run-command-client
+            (lambda (name args) (setf forwarded (list name args))))
+           (cl-tmux::%ensure-server-running
+            (lambda (name) (setf ensured name))))
+        (cl-tmux::run-new-session '("-d" "-s" "beta" "-n" "two"))
+        (expect (equal '("alpha" ("new-session" "-d" "-s" "beta" "-n" "two"))
+                       forwarded))
+        (expect (null ensured))
+        (expect (equal '(nil) (reverse probes))))))
+
+  ;; run-source-file with a nonexistent path exits 1 and writes tmux's diagnostic.
+  (it "run-source-file-nonexistent-path-exits-1-with-diagnostic"
+    (let (exit-code
+          (output (make-string-output-stream)))
+      (let ((*error-output* output)
+            (cl-tmux::*message-log* nil))
         (with-stubbed-exit exit-code
-          (funcall fn args))
-        (is (eql 1 exit-code)
-            (format nil "~A without a server must exit with code 1" fn))))))
+          (cl-tmux::run-source-file (list "/nonexistent/no-such-file.conf"))))
+      (expect (eql 1 exit-code))
+      (let ((text (get-output-stream-string output)))
+        (expect (search "No such file or directory: /nonexistent/no-such-file.conf"
+                        text)))))
 
-(test run-commands-forward-to-server
-  "Commands forward their name and args to an existing server and exit cleanly."
-  (dolist (row '(("0"    cl-tmux::run-kill-server         ("-q")
-                          ("kill-server" "-q"))
-                  ("work" cl-tmux::run-list-sessions        ("-F" "#{session_name}")
-                          ("list-sessions" "-F" "#{session_name}"))
-                  ("work" cl-tmux::run-list-windows         ("-F" "#{window_name}")
-                          ("list-windows" "-F" "#{window_name}"))
-                  ("work" cl-tmux::run-display-message      ("-p" "hello")
-                          ("display-message" "-p" "hello"))
-                  ("work" cl-tmux::run-show-options         ("-g")
-                          ("show-options" "-g"))
-                  ("work" cl-tmux::run-show-window-options  ("-g")
-                          ("show-window-options" "-g"))))
-    (destructuring-bind (server fn args expected-fwd) row
-      (with-stubbed-server server (forwarded exit-code)
-        (with-stubbed-exit exit-code
-          (funcall fn args))
-        (is (equal (list server expected-fwd) forwarded)
-            (format nil "~A must forward ~A to server" fn (first expected-fwd)))
-        (is (eql 0 exit-code)
-            (format nil "~A must exit 0 after forwarding" fn))))))
-
-(test run-new-session-forwards-full-argv-when-server-exists
-  "run-new-session preserves tmux flags by forwarding the full argv to the server."
-  (let ((forwarded nil)
-        (attached nil))
-    (with-stubbed-fdefinition
-        ((cl-tmux::%running-server-name
-          (lambda (&optional preferred) (declare (ignore preferred)) "0"))
-         (cl-tmux::run-command-client
-          (lambda (name args) (setf forwarded (list name args))))
-         (cl-tmux::run-client
-          (lambda (&rest args) (setf attached args))))
-      (cl-tmux::run-new-session '("-s" "work" "-n" "shell" "-c" "/tmp" "-d"))
-      (is (equal '("0" ("new-session" "-s" "work" "-n" "shell" "-c" "/tmp" "-d"))
-                 forwarded)
-          "new-session must forward all original flags")
-      (is (null attached)
-          "-d must not attach after forwarding"))))
-
-(test run-new-session-discovers-existing-server-before-session-name
-  "run-new-session -s NAME creates a session in the existing server, not a new NAME socket."
-  (let ((forwarded nil)
-        (ensured nil)
-        (probes '()))
-    (with-stubbed-fdefinition
-        ((cl-tmux::%running-server-name
-          (lambda (&optional preferred)
-            (push preferred probes)
-            (and (null preferred) "alpha")))
-         (cl-tmux::run-command-client
-          (lambda (name args) (setf forwarded (list name args))))
-         (cl-tmux::%ensure-server-running
-          (lambda (name) (setf ensured name))))
-      (cl-tmux::run-new-session '("-d" "-s" "beta" "-n" "two"))
-      (is (equal '("alpha" ("new-session" "-d" "-s" "beta" "-n" "two"))
-                 forwarded)
-          "new-session must forward to the already-running server")
-      (is (null ensured)
-          "new-session must not start a second server named after -s")
-      (is (equal '(nil) (reverse probes))
-          "new-session should discover any running server before treating -s as a socket name"))))
-
-(test run-source-file-nonexistent-path-exits-1-with-diagnostic
-  "run-source-file with a nonexistent path exits 1 and writes tmux's diagnostic."
-  (let (exit-code
-        (output (make-string-output-stream)))
-    (let ((*error-output* output)
-          (cl-tmux::*message-log* nil))
+  ;; run-has-session with a nonexistent socket path exits with code 1.
+  (it "run-has-session-no-socket-exits-1"
+    (let (exit-code)
       (with-stubbed-exit exit-code
-        (cl-tmux::run-source-file (list "/nonexistent/no-such-file.conf"))))
-    (is (eql 1 exit-code)
-        "run-source-file with nonexistent path must fail")
-    (let ((text (get-output-stream-string output)))
-      (is (search "No such file or directory: /nonexistent/no-such-file.conf"
-                  text)
-          "run-source-file must write the missing-file diagnostic to stderr"))))
+        (cl-tmux::run-has-session (list "-t" "no-such-session-xyz")))
+      (expect (eql 1 exit-code))))
 
-(test run-has-session-no-socket-exits-1
-  "run-has-session with a nonexistent socket path exits with code 1."
-  (let (exit-code)
-    (with-stubbed-exit exit-code
-      (cl-tmux::run-has-session (list "-t" "no-such-session-xyz")))
-    (is (eql 1 exit-code)
-        "run-has-session without socket must exit 1")))
+  ;; run-has-session with a socket FILE nothing listens on exits 1 — a stale
+  ;; socket left by a crashed server is not a live session.
+  (it "run-has-session-stale-socket-exits-1"
+    (let ((cl-tmux::*socket-path-override*
+            (format nil "~A/cl-tmux-has-session-stale-~D.sock"
+                    (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))
+                    (random 1000000)))
+          exit-code)
+      (unwind-protect
+           (progn
+             (with-open-file (s cl-tmux::*socket-path-override*
+                                :direction :output :if-does-not-exist :create)
+               (declare (ignore s)))
+             (with-stubbed-exit exit-code
+               (cl-tmux::run-has-session '("-t" "whatever")))
+             (expect (eql 1 exit-code)))
+        (ignore-errors (delete-file cl-tmux::*socket-path-override*)))))
 
-(test run-has-session-stale-socket-exits-1
-  "run-has-session with a socket FILE nothing listens on exits 1 — a stale
-   socket left by a crashed server is not a live session."
-  (let ((cl-tmux::*socket-path-override*
-          (format nil "~A/cl-tmux-has-session-stale-~D.sock"
-                  (string-right-trim "/" (or (sb-ext:posix-getenv "TMPDIR") "/tmp"))
-                  (random 1000000)))
-        exit-code)
-    (unwind-protect
-         (progn
-           (with-open-file (s cl-tmux::*socket-path-override*
-                              :direction :output :if-does-not-exist :create)
-             (declare (ignore s)))
-           (with-stubbed-exit exit-code
-             (cl-tmux::run-has-session '("-t" "whatever")))
-           (is (eql 1 exit-code)
-               "a stale socket file must not count as a live session"))
-      (ignore-errors (delete-file cl-tmux::*socket-path-override*)))))
-
-(test run-commands-are-fbound
-  "CLI helper handlers are all fbound."
-  (dolist (sym '(cl-tmux::run-kill-server
+  ;; CLI helper handlers are all fbound.
+  (it "run-commands-are-fbound"
+    (dolist (sym '(cl-tmux::run-kill-server
 		 cl-tmux::run-list-sessions
 		 cl-tmux::run-list-windows
 		 cl-tmux::run-list-commands
@@ -194,69 +207,64 @@
 		 cl-tmux::run-show-window-options
 		 cl-tmux::run-source-file
 		 cl-tmux::run-has-session))
-    (is (fboundp sym) "~S must be fbound" sym)))
+      (expect (fboundp sym))))
 
-;;; ── -V / --version / -h / --help / bad-flag usage ───────────────────────────
+  ;;; ── -V / --version / -h / --help / bad-flag usage ───────────────────────────
 
-(test run-version-prints-version-and-exits-zero
-  "run-version prints \"cl-tmux <version>\" to stdout and exits 0."
-  (let (exit-code output)
-    (setf output
-          (with-output-to-string (*standard-output*)
-            (with-stubbed-exit exit-code
-              (cl-tmux::run-version nil))))
-    (is (eql 0 exit-code) "run-version must exit 0")
-    (is (string= (format nil "cl-tmux ~A~%" (cl-tmux/version:version-string))
-                 output)
-        "run-version must print the cl-tmux version line")))
-
-(test run-usage-prints-usage-and-exits-zero
-  "run-usage prints a usage summary to stdout and exits 0."
-  (let (exit-code output)
-    (setf output
-          (with-output-to-string (*standard-output*)
-            (with-stubbed-exit exit-code
-              (cl-tmux::run-usage nil))))
-    (is (eql 0 exit-code) "run-usage must exit 0")
-    (is (eql 0 (search "usage: cl-tmux" output))
-        "usage output must start with \"usage: cl-tmux\"")))
-
-(test dispatch-version-and-help-flags
-  "argv -V/--version routes to run-version; -h/--help routes to run-usage."
-  (dolist (c '(("-V" :version) ("--version" :version)
-               ("-h" :usage)   ("--help" :usage)))
-    (destructuring-bind (flag expected) c
-      (let ((called nil))
-        (with-stubbed-fdefinition
-            ((cl-tmux::run-version
-              (lambda (&rest a) (declare (ignore a)) (setf called :version)))
-             (cl-tmux::run-usage
-              (lambda (&rest a) (declare (ignore a)) (setf called :usage))))
-          (let ((sb-ext:*posix-argv* (list "cl-tmux" flag)))
-            (cl-tmux::main))
-          (is (eq expected called)
-              "~A must dispatch to ~A" flag expected))))))
-
-(test dispatch-unknown-dash-flag-prints-usage-and-exits-one
-  "An unknown dash-flag is a usage error (stderr + exit 1), not a silent
-   standalone start."
-  (let ((standalone-called nil)
-        exit-code
-        errout)
-    (with-stubbed-fdefinition
-        ((cl-tmux::run-standalone
-          (lambda (&rest a) (declare (ignore a)) (setf standalone-called t))))
-      (setf errout
-            (with-output-to-string (*error-output*)
+  ;; run-version prints "cl-tmux <version>" to stdout and exits 0.
+  (it "run-version-prints-version-and-exits-zero"
+    (let (exit-code output)
+      (setf output
+            (with-output-to-string (*standard-output*)
               (with-stubbed-exit exit-code
-                (let ((sb-ext:*posix-argv* (list "cl-tmux" "-Z")))
-                  (cl-tmux::main))))))
-    (is (eql 1 exit-code) "unknown dash-flag must exit 1")
-    ;; cl-cli (main-startup-flags.lisp *cli-app*) now rejects -Z during global
-    ;; flag parsing and prints its own diagnostic (e.g. "cl-tmux: Unknown
-    ;; option...") before the usage block, so "usage: cl-tmux" no longer
-    ;; starts at position 0 -- it just needs to be present.
-    (is-true (search "usage: cl-tmux" errout)
-        "unknown dash-flag must print usage to stderr")
-    (is-false standalone-called
-              "unknown dash-flag must not fall through to run-standalone")))
+                (cl-tmux::run-version nil))))
+      (expect (eql 0 exit-code))
+      (expect (string= (format nil "cl-tmux ~A~%" (cl-tmux/version:version-string))
+                       output))))
+
+  ;; run-usage prints a usage summary to stdout and exits 0.
+  (it "run-usage-prints-usage-and-exits-zero"
+    (let (exit-code output)
+      (setf output
+            (with-output-to-string (*standard-output*)
+              (with-stubbed-exit exit-code
+                (cl-tmux::run-usage nil))))
+      (expect (eql 0 exit-code))
+      (expect (eql 0 (search "usage: cl-tmux" output)))))
+
+  ;; argv -V/--version routes to run-version; -h/--help routes to run-usage.
+  (it "dispatch-version-and-help-flags"
+    (dolist (c '(("-V" :version) ("--version" :version)
+                 ("-h" :usage)   ("--help" :usage)))
+      (destructuring-bind (flag expected) c
+        (let ((called nil))
+          (with-stubbed-fdefinition
+              ((cl-tmux::run-version
+                (lambda (&rest a) (declare (ignore a)) (setf called :version)))
+               (cl-tmux::run-usage
+                (lambda (&rest a) (declare (ignore a)) (setf called :usage))))
+            (let ((sb-ext:*posix-argv* (list "cl-tmux" flag)))
+              (cl-tmux::main))
+            (expect (eq expected called)))))))
+
+  ;; An unknown dash-flag is a usage error (stderr + exit 1), not a silent
+  ;; standalone start.
+  (it "dispatch-unknown-dash-flag-prints-usage-and-exits-one"
+    (let ((standalone-called nil)
+          exit-code
+          errout)
+      (with-stubbed-fdefinition
+          ((cl-tmux::run-standalone
+            (lambda (&rest a) (declare (ignore a)) (setf standalone-called t))))
+        (setf errout
+              (with-output-to-string (*error-output*)
+                (with-stubbed-exit exit-code
+                  (let ((sb-ext:*posix-argv* (list "cl-tmux" "-Z")))
+                    (cl-tmux::main))))))
+      (expect (eql 1 exit-code))
+      ;; cl-cli (main-startup-flags.lisp *cli-app*) now rejects -Z during global
+      ;; flag parsing and prints its own diagnostic (e.g. "cl-tmux: Unknown
+      ;; option...") before the usage block, so "usage: cl-tmux" no longer
+      ;; starts at position 0 -- it just needs to be present.
+      (expect (search "usage: cl-tmux" errout) :to-be-truthy)
+      (expect standalone-called :to-be-falsy))))

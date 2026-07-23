@@ -2,9 +2,6 @@
 
 ;;;; config directive suite, bindable commands, basic apply/set directives — part I
 
-(def-suite config-directives-suite :description "Config file directive parsing")
-(in-suite config-directives-suite)
-
 ;;; Import the config-directives symbols we need
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
@@ -21,150 +18,137 @@
 ;;; NOTE: with-isolated-key-tables and with-temp-config-file are defined in
 ;;; tests/helpers-overlay-assertions.lisp so all test suites can reuse them.
 
-;;; *bindable-commands* invariant
+(describe "config-directives-suite"
 
-(test bindable-commands-excludes-copy-mode-internals
-  "*bindable-commands* must exclude copy-mode-internal commands."
-  (is (null (intersection '(:copy-mode-exit :copy-mode-up :copy-mode-down)
-                          cl-tmux/config::*bindable-commands*))
-      "copy-mode-internal commands must not be user-bindable, found ~A"
-      (intersection '(:copy-mode-exit :copy-mode-up :copy-mode-down)
-                    cl-tmux/config::*bindable-commands*))
-  (dolist (cmd '(:copy-mode-exit :copy-mode-up :copy-mode-down))
-    (is (not (member cmd cl-tmux/config::*bindable-commands*))
-        "~A must not be a user-bindable command" cmd))
-  (is (member :new-window cl-tmux/config::*bindable-commands*)
-      ":new-window must remain a user-bindable command"))
+  ;;; *bindable-commands* invariant
 
-;;; apply-config-directive
+  ;; *bindable-commands* must exclude copy-mode-internal commands.
+  (it "bindable-commands-excludes-copy-mode-internals"
+    (expect (null (intersection '(:copy-mode-exit :copy-mode-up :copy-mode-down)
+                                cl-tmux/config::*bindable-commands*)))
+    (dolist (cmd '(:copy-mode-exit :copy-mode-up :copy-mode-down))
+      (expect (not (member cmd cl-tmux/config::*bindable-commands*))))
+    (expect (member :new-window cl-tmux/config::*bindable-commands*)))
 
-(test apply-directive-bind-returns-t
-  "apply-config-directive for a valid bind returns T and binds the char."
-  (with-isolated-config
-    (assert-config-directive-applied '("bind" "z" "new-window")
-                                     "valid bind directive")
-    (is (eq :new-window (lookup-key-binding #\z))
-        "#\\z should be bound to :new-window after the bind directive")))
+  ;;; apply-config-directive
 
-(test apply-directive-unknown-returns-nil
-  "apply-config-directive for an unknown command returns NIL and changes nothing."
-  (with-isolated-config
-    (let* ((tbl (cl-tmux/config:ensure-key-table "prefix"))
-           (count-before (hash-table-count tbl))
-           (shell-before    *default-shell*)
-           (height-before   *status-height*))
-      (assert-config-directive-rejected '("bogus" "x")
-                                        "an unknown command")
-      (is (= count-before (hash-table-count tbl))
-          "prefix key-table must be unchanged by an unknown directive")
-      (is (equal shell-before *default-shell*)
-          "*default-shell* must be unchanged by an unknown directive")
-      (is (eql height-before *status-height*)
-          "*status-height* must be unchanged by an unknown directive"))))
+  ;; apply-config-directive for a valid bind returns T and binds the char.
+  (it "apply-directive-bind-returns-t"
+    (with-isolated-config
+      (assert-config-directive-applied '("bind" "z" "new-window")
+                                       "valid bind directive")
+      (expect (eq :new-window (lookup-key-binding #\z)))))
 
-;;; set [-g|-a|...] name value  — flag handling (the canonical .tmux.conf form)
+  ;; apply-config-directive for an unknown command returns NIL and changes nothing.
+  (it "apply-directive-unknown-returns-nil"
+    (with-isolated-config
+      (let* ((tbl (cl-tmux/config:ensure-key-table "prefix"))
+             (count-before (hash-table-count tbl))
+             (shell-before    *default-shell*)
+             (height-before   *status-height*))
+        (assert-config-directive-rejected '("bogus" "x")
+                                          "an unknown command")
+        (expect (= count-before (hash-table-count tbl)))
+        (expect (equal shell-before *default-shell*))
+        (expect (eql height-before *status-height*)))))
 
-(test apply-set-directive-global-flag
-  "'set-option -g status off' applies (3 tokens) — previously the fixed-arity table
-   silently dropped it.  Sets 'status', not an option named '-g'."
-  (with-isolated-options ()
-    (assert-set-directive-option-state '("set-option" "-g" "status" "off")
-                                       "status" "off"
-                                       :context "set-option -g status off")
-    (is (null (cl-tmux/options:get-option "-g"))
-        "must NOT create an option literally named '-g'")))
+  ;;; set [-g|-a|...] name value  — flag handling (the canonical .tmux.conf form)
 
-(test apply-set-directive-append-flag
-  "'set-option -ag <name> <value>' appends to the option's current value."
-  (with-isolated-options ("status-left" "A")
-    (assert-set-directive-option-state '("set-option" "-ag" "status-left" "B")
-                                       "status-left" "AB"
-                                       :context "set-option -ag")))
+  ;; 'set-option -g status off' applies (3 tokens) — previously the fixed-arity table
+  ;; silently dropped it.  Sets 'status', not an option named '-g'.
+  (it "apply-set-directive-global-flag"
+    (with-isolated-options ()
+      (assert-set-directive-option-state '("set-option" "-g" "status" "off")
+                                         "status" "off"
+                                         :context "set-option -g status off")
+      (expect (null (cl-tmux/options:get-option "-g")))))
 
-(test apply-set-directive-unset-flag
-  "'set-option -u <name>' removes the option from the current scope."
-  (with-isolated-options ("status-left" "keep-me")
-    (assert-set-directive-option-state '("set-option" "-u" "status-left")
-                                       "status-left" nil
-                                       :context "set-option -u"
-                                       :present-p nil)))
+  ;; 'set-option -ag <name> <value>' appends to the option's current value.
+  (it "apply-set-directive-append-flag"
+    (with-isolated-options ("status-left" "A")
+      (assert-set-directive-option-state '("set-option" "-ag" "status-left" "B")
+                                         "status-left" "AB"
+                                         :context "set-option -ag")))
 
-(test apply-set-directive-plain-unaffected
-  "Plain 'set name value' (no flags) still flows through the normal directive
-   table and applies unchanged."
-  (with-isolated-options ()
-    (assert-set-directive-option-state '("set-option" "status" "off")
-                                       "status" "off"
-                                       :context "plain set")))
+  ;; 'set-option -u <name>' removes the option from the current scope.
+  (it "apply-set-directive-unset-flag"
+    (with-isolated-options ("status-left" "keep-me")
+      (assert-set-directive-option-state '("set-option" "-u" "status-left")
+                                         "status-left" nil
+                                         :context "set-option -u"
+                                         :present-p nil)))
 
-;;; set mouse — *mouse-reporting-hook* side effect
+  ;; Plain 'set name value' (no flags) still flows through the normal directive
+  ;; table and applies unchanged.
+  (it "apply-set-directive-plain-unaffected"
+    (with-isolated-options ()
+      (assert-set-directive-option-state '("set-option" "status" "off")
+                                         "status" "off"
+                                         :context "plain set")))
 
-(test set-mouse-invokes-mouse-reporting-hook
-  "'set-option -g mouse on'/'off' invokes *mouse-reporting-hook* with T/NIL so the
-   renderer layer can enable/disable mouse reporting without config depending
-   on it directly."
-  (with-isolated-config
-    (let ((calls nil))
-      (let ((cl-tmux/config:*mouse-reporting-hook*
-              (lambda (on-p) (push on-p calls))))
-        (assert-config-directive-applied '("set-option" "-g" "mouse" "on")
-                                         "set-option -g mouse on")
-        (assert-config-directive-applied '("set-option" "-g" "mouse" "off")
-                                         "set-option -g mouse off")
-        (is (equal '(nil t) calls)
-            "the hook must be called with T then NIL, got ~A" calls)))))
+  ;;; set mouse — *mouse-reporting-hook* side effect
 
-(test set-mouse-with-no-hook-does-not-signal
-  "'set-option -g mouse on' is safe when *mouse-reporting-hook* is unset (NIL)."
-  (with-isolated-config
-    (let ((cl-tmux/config:*mouse-reporting-hook* nil))
-      (finishes
-        (assert-config-directive-applied '("set-option" "-g" "mouse" "on")
-                                         "set-option -g mouse on with no hook")))))
+  ;; 'set-option -g mouse on'/'off' invokes *mouse-reporting-hook* with T/NIL so the
+  ;; renderer layer can enable/disable mouse reporting without config depending
+  ;; on it directly.
+  (it "set-mouse-invokes-mouse-reporting-hook"
+    (with-isolated-config
+      (let ((calls nil))
+        (let ((cl-tmux/config:*mouse-reporting-hook*
+                (lambda (on-p) (push on-p calls))))
+          (assert-config-directive-applied '("set-option" "-g" "mouse" "on")
+                                           "set-option -g mouse on")
+          (assert-config-directive-applied '("set-option" "-g" "mouse" "off")
+                                           "set-option -g mouse off")
+          (expect (equal '(nil t) calls))))))
 
-;;; set-shell / set-status-height directives
+  ;; 'set-option -g mouse on' is safe when *mouse-reporting-hook* is unset (NIL).
+  (it "set-mouse-with-no-hook-does-not-signal"
+    (with-isolated-config
+      (let ((cl-tmux/config:*mouse-reporting-hook* nil))
+        (finishes
+          (assert-config-directive-applied '("set-option" "-g" "mouse" "on")
+                                           "set-option -g mouse on with no hook")))))
 
-(test set-shell-and-status-height-directives
-  "set-shell sets *default-shell*; set-status-height sets *status-height*."
-  (with-isolated-config
-    (assert-config-directive-applied '("set-shell" "/usr/bin/zsh")
-                                     "set-shell directive")
-    (is (string= "/usr/bin/zsh" *default-shell*)
-        "*default-shell* should be /usr/bin/zsh, got ~A" *default-shell*)
-    (assert-config-directive-applied '("set-status-height" "2")
-                                     "set-status-height directive")
-    (is (= 2 *status-height*)
-        "*status-height* should be 2, got ~A" *status-height*)))
+  ;;; set-shell / set-status-height directives
 
-;;; bind/unbind/set: arity and validity table
+  ;; set-shell sets *default-shell*; set-status-height sets *status-height*.
+  (it "set-shell-and-status-height-directives"
+    (with-isolated-config
+      (assert-config-directive-applied '("set-shell" "/usr/bin/zsh")
+                                       "set-shell directive")
+      (expect (string= "/usr/bin/zsh" *default-shell*))
+      (assert-config-directive-applied '("set-status-height" "2")
+                                       "set-status-height directive")
+      (expect (= 2 *status-height*))))
 
-(test invalid-directive-cases-return-nil
-  "Every malformed or unknown directive returns NIL without mutating state."
-  (with-isolated-config
-    ;; NOTE: ("bind" "z" "new-window" "x") is no longer here — a bind with extra
-    ;; tokens is now a valid arg-taking binding (key → command line), covered by
-    ;; bind-key-to-command-line-stores-token-list.
-    (dolist (tokens '(("bind")
-                      ("bind" "z" "bogus-command")
-                      ("unbind")
-                      ("unbind" "z" "extra")
-                      ("set-shell")
-                      ("set-status-height")
-                      ("totally-unknown" "arg")))
-      (assert-config-directive-rejected tokens
-                                        (format nil "~S" tokens)))))
+  ;;; bind/unbind/set: arity and validity table
 
-;;; set-status-height: tolerant parsing
+  ;; Every malformed or unknown directive returns NIL without mutating state.
+  (it "invalid-directive-cases-return-nil"
+    (with-isolated-config
+      ;; NOTE: ("bind" "z" "new-window" "x") is no longer here — a bind with extra
+      ;; tokens is now a valid arg-taking binding (key → command line), covered by
+      ;; bind-key-to-command-line-stores-token-list.
+      (dolist (tokens '(("bind")
+                        ("bind" "z" "bogus-command")
+                        ("unbind")
+                        ("unbind" "z" "extra")
+                        ("set-shell")
+                        ("set-status-height")
+                        ("totally-unknown" "arg")))
+        (assert-config-directive-rejected tokens
+                                          (format nil "~S" tokens)))))
 
-(test set-status-height-noninteger-is-tolerated
-  "Non-integer or non-positive set-status-height values return NIL and do not signal."
-  (with-isolated-config
-    (let ((before *status-height*))
-      (assert-config-directive-safe-nil '("set-status-height" "abc")
-                                        "set-status-height with a non-integer value")
-      (is (eql before *status-height*)
-          "*status-height* should be unchanged, got ~A" *status-height*)
-      (assert-config-directive-safe-nil '("set-status-height" "0")
-                                        "set-status-height with a non-positive value (0)")
-      (is (eql before *status-height*)
-          "*status-height* should be unchanged, got ~A" *status-height*))))
+  ;;; set-status-height: tolerant parsing
+
+  ;; Non-integer or non-positive set-status-height values return NIL and do not signal.
+  (it "set-status-height-noninteger-is-tolerated"
+    (with-isolated-config
+      (let ((before *status-height*))
+        (assert-config-directive-safe-nil '("set-status-height" "abc")
+                                          "set-status-height with a non-integer value")
+        (expect (eql before *status-height*))
+        (assert-config-directive-safe-nil '("set-status-height" "0")
+                                          "set-status-height with a non-positive value (0)")
+        (expect (eql before *status-height*))))))

@@ -13,7 +13,7 @@ checks** that runs hermetically through Nix.
 Built on:
 
 - **SBCL** — the Lisp implementation (PTYs via `sb-ext:run-program`, POSIX via `sb-posix`)
-- **CFFI** — for the handful of libc calls sb-posix doesn't cover (`select`, `ioctl`, termios)
+- **CFFI** — for the handful of libc calls sb-posix doesn't cover (`select`, `ioctl`)
 - **bordeaux-threads** — one reader thread per PTY pane
 - **babel** / **cl-ppcre** — UTF-8 codecs and regexes (format `s///` and `m/r:` matching)
 
@@ -182,7 +182,7 @@ cl-tmux/
 │   │   ├── commands/       #   command implementations; tokenizer on cl-parser-kit
 │   │   ├── config/         #   tmux.conf directives; shell calls on cl-boundary-kit
 │   │   └── dispatch/       #   command table, handlers, control mode
-│   ├── infrastructure/     # adapters: PTY (CFFI), sockets, input, control mode
+│   ├── infrastructure/     # adapters: PTY (cl-tty-kit spawn/IO; CFFI select+ioctl), sockets, input, control mode
 │   ├── presentation/       # renderer (cl-tty-kit colour downsampling), events, prompt
 │   ├── reasoning/          # cl-prolog cold-path read-models (keys, commands)
 │   └── dataflow/           # cl-dataflow cold-path read-model (copy-mode lifecycle)
@@ -245,10 +245,13 @@ hand — not bolted on beside it:
   copy-mode lifecycle as an inspectable state machine (`src/dataflow/`), the
   cl-dataflow counterpart to `src/reasoning/` above — same cold-path-only
   rule, same `nix build .#checks.<system>.dataflow` pattern.
-- [`cl-tty-kit`](https://github.com/nerima-lisp/cl-tty-kit) contributes
-  `rgb-to-256` for `-2` (force-256-colour) true-colour downsampling in
-  `renderer-format.lisp`, cl-tmux's first outer-terminal colour-capability
-  negotiation.
+- [`cl-tty-kit`](https://github.com/nerima-lisp/cl-tty-kit) backs the PTY
+  layer — pane spawn, byte-transparent master-fd read/write, raw mode, and
+  terminal-size queries all delegate to it (`src/infrastructure/pty/`) — and
+  contributes `rgb-to-256` for `-2` (force-256-colour) true-colour downsampling
+  in `renderer-format.lisp`, cl-tmux's first outer-terminal colour-capability
+  negotiation.  cl-tmux keeps its own `select(2)` fd-multiplexing loop, SIGHUP
+  `pty-close`, and `set-pty-size` ioctl on top.
 - [`cl-parser-kit`](https://github.com/nerima-lisp/cl-parser-kit) is the
   tokenizer framework `commands-tokenizer.lisp`'s shell-style argument
   splitter runs on — one custom rule for the quote/escape-joining scan (no

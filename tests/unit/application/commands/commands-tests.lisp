@@ -2,9 +2,6 @@
 
 ;;;; resize-pane, copy-mode-scroll, select-window, rename-session — part I
 
-(def-suite commands-suite :description "Pane resize / copy-mode-scroll / selection command logic (src/commands.lisp)")
-(in-suite commands-suite)
-
 ;;; ── Local fixtures (no PTY: fd -1, pid -1) ──────────────────────────────────
 ;;;
 ;;; Tree-based split windows: assembled with make-layout-leaf / make-layout-split
@@ -47,74 +44,6 @@
     (session-select-window sess win)
     sess))
 
-;;; ── resize-pane: vertical split ─────────────────────────────────────────────
-
-(test resize-vertical-right-grows-active-shrinks-neighbour
-  "On a vertical split, :right grows the active (left) pane and shrinks its
-   right neighbour; resize-pane delegates to window-resize-active."
-  (let* ((win (%vsplit-window 20))
-         (p0  (first  (window-panes win)))
-         (p1  (second (window-panes win))))
-    (is (eq p0 (resize-pane win :right 5)) "returns the active pane on resize")
-    (is (= 25 (pane-width p0)) "active pane grows by amount")
-    (is (= 15 (pane-width p1)) "neighbour shrinks by amount")
-    (is (= 26 (pane-x p1))
-        "neighbour x = active.x + active.width + 1 (separator column)")))
-
-(test resize-vertical-left-picks-previous-neighbour
-  "When the active pane is the right one, :left adjusts against the previous
-   (left) neighbour rather than a non-existent right neighbour."
-  (let* ((win (%vsplit-window 20))
-         (p0  (first  (window-panes win)))
-         (p1  (second (window-panes win))))
-    (window-select-pane win p1)            ; make the right pane active
-    (is (eq p1 (resize-pane win :left 5)))
-    (is (= 15 (pane-width p1)) "active shrinks toward the left")
-    (is (= 25 (pane-width p0)) "previous neighbour grows")))
-
-(test resize-pane-no-tree-returns-nil
-  "resize-pane with no tree (NIL) returns NIL immediately."
-  (let* ((p0  (%make-test-pane))
-         (win (make-window :id 1 :name "w" :width 20 :height 5
-                           :panes (list p0) :tree nil)))
-    (window-select-pane win p0)
-    (is (null (resize-pane win :right 5)) "no tree => NIL")))
-
-;;; ── resize-pane: horizontal split ───────────────────────────────────────────
-
-(test resize-horizontal-down-grows-active-shrinks-lower
-  "On a horizontal split, :down grows the active (upper) pane and shrinks the
-   lower neighbour; the neighbour's y slides one row past the grown pane."
-  (let* ((win (%hsplit-window 10))
-         (p0  (first  (window-panes win)))
-         (p1  (second (window-panes win))))
-    (is (eq p0 (resize-pane win :down 3)))
-    (is (= 13 (pane-height p0)) "upper pane grows by amount")
-    (is (= 7  (pane-height p1)) "lower pane shrinks by amount")))
-
-;;; ── resize-pane -x / -y: absolute size (command arg form) ────────────────────
-
-(test resize-pane-x-absolute-table
-  "resize-pane -x N sets the active pane's width to N (both grow and shrink paths)."
-  (dolist (row '(("25" 25 "resize-pane -x 25 grows pane from 20 to 25")
-                 ("15" 15 "resize-pane -x 15 shrinks pane from 20 to 15")))
-    (destructuring-bind (n-str expected desc) row
-      (let* ((win (%vsplit-window 20))
-             (p0  (first (window-panes win)))
-             (s   (%make-session-with-window win)))
-        (cl-tmux::%cmd-resize-pane-arg s (list "-x" n-str))
-        (is (= expected (pane-width p0)) "~A" desc)))))
-
-(test resize-pane-y-absolute-sets-height
-  "resize-pane -y N sets the active pane to an absolute height of N."
-  (let* ((win (%hsplit-window 10))
-         (p0  (first (window-panes win)))
-         (s   (%make-session-with-window win)))
-    (cl-tmux::%cmd-resize-pane-arg s '("-y" "13"))
-    (is (= 13 (pane-height p0)) "resize-pane -y 13 must make the active pane 13 tall")))
-
-;;; ── copy-mode-scroll ─────────────────────────────────────────────────────────
-
 (defun %make-test-pane (&key (id 1) (x 0) (y 0) (w 20) (h 5))
   "Return a no-PTY pane with a fresh screen of W x H."
   (make-pane :id id :x x :y y :width w :height h
@@ -128,137 +57,200 @@
     (cl-tmux/commands::copy-mode-enter s)
     s))
 
-(test copy-mode-scroll-back-clamps-to-scrollback-length
-  "Scrolling back (positive delta) past the oldest line clamps the copy-offset
-   to the scrollback length."
-  (let ((s (%screen-with-scrollback 3)))
-    (cl-tmux/commands::copy-mode-scroll s 100)
-    (is (= 3 (screen-copy-offset s)) "offset clamped to scrollback length")
-    (is-true (cl-tmux/terminal/types:screen-dirty-p s)
-             "scrolling marks the screen dirty")))
+(describe "commands-suite"
 
-(test copy-mode-scroll-forward-clamps-at-zero
-  "Scrolling forward (negative delta) past the live view clamps the offset at 0."
-  (let ((s (%screen-with-scrollback 3)))
-    (cl-tmux/commands::copy-mode-scroll s 100)   ; first jump to the oldest line
-    (is (= 3 (screen-copy-offset s)))
-    (cl-tmux/commands::copy-mode-scroll s -100)  ; then race back to live
-    (is (= 0 (screen-copy-offset s)) "offset clamped at 0")))
+  ;;; ── resize-pane: vertical split ─────────────────────────────────────────────
 
-(test copy-mode-selection-honours-scroll-offset
-  "A full-row selection made while scrolled back into the scrollback yanks the
-   text the user SEES at that viewport row (via screen-display-cell), not the
-   live-grid row at the same index.  Regression guard for the screen-cell ->
-   screen-display-cell fix in %extract-row-chars."
-  (let ((s (make-screen 8 3)))
-    (feed-lines s "AAA" "BBB" "CCC" "DDD" "EEE")
-    (cl-tmux/commands::copy-mode-enter s)
-    (cl-tmux/commands::copy-mode-scroll s 1000)   ; scroll fully back
-    (is (plusp (screen-copy-offset s))
-        "precondition: 5 lines on a height-3 screen must create scrollback")
-    (let ((w      (screen-width s))
-          (offset (screen-copy-offset s)))
-      (let ((expected (string-right-trim " " (display-row-string s 0))))
-        ;; Mark and cursor at viewport row 0; supply the offset so %selection-bounds
-        ;; can correctly compute virtual rows even though we're setting mark manually.
-        (setf (screen-copy-mark        s) (cons 0 0)
-              (screen-copy-mark-offset s) offset
-              (screen-copy-cursor      s) (cons 0 w)
-              (screen-copy-selecting   s) t)
-        (is (string= expected
-                     (string-right-trim " " (or (cl-tmux/commands::%selection-text s) "")))
-            "scrolled-back selection yanks the displayed (scrollback) text, not the live row")))))
+  ;; On a vertical split, :right grows the active (left) pane and shrinks its
+  ;; right neighbour; resize-pane delegates to window-resize-active.
+  (it "resize-vertical-right-grows-active-shrinks-neighbour"
+    (let* ((win (%vsplit-window 20))
+           (p0  (first  (window-panes win)))
+           (p1  (second (window-panes win))))
+      (expect (eq p0 (resize-pane win :right 5)))
+      (expect (= 25 (pane-width p0)))
+      (expect (= 15 (pane-width p1)))
+      (expect (= 26 (pane-x p1)))))
 
-(test copy-mode-enter-e-sets-exit-on-bottom
-  "copy-mode-enter with :exit-on-bottom t sets the screen slot."
-  (let ((s (make-screen 20 5)))
-    (cl-tmux/commands::copy-mode-enter s :exit-on-bottom t)
-    (is-true (cl-tmux/terminal/types:screen-copy-exit-on-bottom s)
-             "exit-on-bottom slot must be set by -e")))
+  ;; When the active pane is the right one, :left adjusts against the previous
+  ;; (left) neighbour rather than a non-existent right neighbour.
+  (it "resize-vertical-left-picks-previous-neighbour"
+    (let* ((win (%vsplit-window 20))
+           (p0  (first  (window-panes win)))
+           (p1  (second (window-panes win))))
+      (window-select-pane win p1)            ; make the right pane active
+      (expect (eq p1 (resize-pane win :left 5)))
+      (expect (= 15 (pane-width p1)))
+      (expect (= 25 (pane-width p0)))))
 
-(test copy-mode-e-auto-exits-on-scroll-to-bottom
-  "With exit-on-bottom (copy-mode -e), scrolling back down to the live bottom
-   (offset 0) auto-exits copy mode."
-  (let ((s (%screen-with-scrollback 3)))
-    ;; Re-enter with -e semantics and scroll up into the scrollback.
-    (cl-tmux/commands::copy-mode-enter s :exit-on-bottom t)
-    (cl-tmux/commands::copy-mode-scroll s 2)        ; scroll back 2 lines (offset 2)
-    (is (= 2 (screen-copy-offset s)) "scrolled back into scrollback")
-    (is-true (screen-copy-mode-p s) "still in copy mode while scrolled up")
-    (cl-tmux/commands::copy-mode-scroll s -100)     ; race back to the live bottom
-    (is-false (screen-copy-mode-p s)
-              "copy-mode -e must auto-exit when scrolled to offset 0")))
+  ;; resize-pane with no tree (NIL) returns NIL immediately.
+  (it "resize-pane-no-tree-returns-nil"
+    (let* ((p0  (%make-test-pane))
+           (win (make-window :id 1 :name "w" :width 20 :height 5
+                             :panes (list p0) :tree nil)))
+      (window-select-pane win p0)
+      (expect (null (resize-pane win :right 5)))))
 
-(test copy-mode-e-no-exit-while-scrolling-up
-  "copy-mode -e does NOT exit while scrolling upward (positive delta)."
-  (let ((s (%screen-with-scrollback 3)))
-    (cl-tmux/commands::copy-mode-enter s :exit-on-bottom t)
-    (cl-tmux/commands::copy-mode-scroll s 100)      ; scroll up to oldest
-    (is-true (screen-copy-mode-p s)
-             "scrolling up must not trigger exit-on-bottom")))
+  ;;; ── resize-pane: horizontal split ───────────────────────────────────────────
 
-(test copy-mode-scroll-noop-when-not-in-copy-mode
-  "Outside copy mode, copy-mode-scroll does nothing: offset stays put and the
-   call returns NIL."
-  (let ((s (make-screen 20 5)))
-    (setf (screen-scrollback s) (list (make-array 0) (make-array 0)))
-    (is-false (screen-copy-mode-p s) "precondition: not in copy mode")
-    (is (null (cl-tmux/commands::copy-mode-scroll s 100)))
-    (is (= 0 (screen-copy-offset s)) "offset untouched when not in copy mode")))
+  ;; On a horizontal split, :down grows the active (upper) pane and shrinks the
+  ;; lower neighbour; the neighbour's y slides one row past the grown pane.
+  (it "resize-horizontal-down-grows-active-shrinks-lower"
+    (let* ((win (%hsplit-window 10))
+           (p0  (first  (window-panes win)))
+           (p1  (second (window-panes win))))
+      (expect (eq p0 (resize-pane win :down 3)))
+      (expect (= 13 (pane-height p0)))
+      (expect (= 7  (pane-height p1)))))
 
-;;; ── select-window-by-number ─────────────────────────────────────────────────
+  ;;; ── resize-pane -x / -y: absolute size (command arg form) ────────────────────
 
-(test select-window-by-number-selects-nth-window
-  "select-window-by-number activates the Nth (0-based) window."
-  (with-fake-session (s :nwindows 3)
-    (let ((w0 (first  (session-windows s)))
-          (w2 (third  (session-windows s))))
-      (is (eq w0 (session-active-window s)) "starts on window 0")
-      (select-window-by-number s 2)
-      (is (eq w2 (session-active-window s)) "index 2 selects the third window")
-      (select-window-by-number s 0)
-      (is (eq w0 (session-active-window s)) "index 0 selects the first window"))))
+  ;; resize-pane -x N sets the active pane's width to N (both grow and shrink paths).
+  (it "resize-pane-x-absolute-table"
+    (dolist (row '(("25" 25 "resize-pane -x 25 grows pane from 20 to 25")
+                   ("15" 15 "resize-pane -x 15 shrinks pane from 20 to 15")))
+      (destructuring-bind (n-str expected desc) row
+        (declare (ignore desc))
+        (let* ((win (%vsplit-window 20))
+               (p0  (first (window-panes win)))
+               (s   (%make-session-with-window win)))
+          (cl-tmux::%cmd-resize-pane-arg s (list "-x" n-str))
+          (expect (= expected (pane-width p0)))))))
 
-(test select-window-by-number-out-of-range-is-noop
-  "select-window-by-number with an out-of-range index leaves the active window unchanged."
-  (let* ((s      (make-fake-session :nwindows 2))
-         (before (session-active-window s)))
-    (select-window-by-number s 99)
-    (is (eq before (session-active-window s))
-        "out-of-range index must not change the active window")))
+  ;; resize-pane -y N sets the active pane to an absolute height of N.
+  (it "resize-pane-y-absolute-sets-height"
+    (let* ((win (%hsplit-window 10))
+           (p0  (first (window-panes win)))
+           (s   (%make-session-with-window win)))
+      (cl-tmux::%cmd-resize-pane-arg s '("-y" "13"))
+      (expect (= 13 (pane-height p0)))))
 
-(test select-window-by-id-stable-after-kill
-  "After killing a middle window, select-window-by-number still finds the
-   window by its stored id, not by list position."
-  (let* ((w0 (make-window :id 0 :name "a" :width 20 :height 5
-                          :panes (list (%make-test-pane :id 1))))
-         (w1 (make-window :id 1 :name "b" :width 20 :height 5
-                          :panes (list (%make-test-pane :id 2))))
-         (w2 (make-window :id 2 :name "c" :width 20 :height 5
-                          :panes (list (%make-test-pane :id 3))))
-         (sess (make-session :id 1 :name "0" :windows (list w0 w1 w2))))
-    (session-select-window sess w0)
-    ;; Kill the middle window (id=1).
-    (kill-window sess w1)
-    ;; List is now [w0, w2].  select-window-by-number 2 must still find w2
-    ;; (id=2 is at list-position 1 after the kill).
-    (select-window-by-number sess 2)
-    (is (eq w2 (session-active-window sess))
-        "select-window-by-number must find w2 by id=2 even after w1 was killed")))
+  ;;; ── copy-mode-scroll ─────────────────────────────────────────────────────────
 
-;;; ── rename-session ──────────────────────────────────────────────────────────
+  ;; Scrolling back (positive delta) past the oldest line clamps the copy-offset
+  ;; to the scrollback length.
+  (it "copy-mode-scroll-back-clamps-to-scrollback-length"
+    (let ((s (%screen-with-scrollback 3)))
+      (cl-tmux/commands::copy-mode-scroll s 100)
+      (expect (= 3 (screen-copy-offset s)))
+      (expect (cl-tmux/terminal/types:screen-dirty-p s) :to-be-truthy)))
 
-(test rename-session-changes-session-name
-  "rename-session sets the session's name to the supplied string."
-  (let ((sess (make-session :id 1 :name "old" :windows nil)))
-    (cl-tmux/commands:rename-session sess "new")
-    (is (string= "new" (session-name sess)) "session name must be updated to \"new\"")))
+  ;; Scrolling forward (negative delta) past the live view clamps the offset at 0.
+  (it "copy-mode-scroll-forward-clamps-at-zero"
+    (let ((s (%screen-with-scrollback 3)))
+      (cl-tmux/commands::copy-mode-scroll s 100)   ; first jump to the oldest line
+      (expect (= 3 (screen-copy-offset s)))
+      (cl-tmux/commands::copy-mode-scroll s -100)  ; then race back to live
+      (expect (= 0 (screen-copy-offset s)))))
 
-(test rename-session-ignores-invalid-names-table
-  "rename-session with \"\" or NIL is a no-op: the session name remains unchanged."
-  (dolist (row '((""  "empty string is a no-op")
-                 (nil "nil is a no-op")))
-    (destructuring-bind (new-name desc) row
-      (let ((sess (make-session :id 1 :name "keep" :windows nil)))
-        (cl-tmux/commands:rename-session sess new-name)
-        (is (string= "keep" (session-name sess)) "~A" desc)))))
+  ;; A full-row selection made while scrolled back into the scrollback yanks the
+  ;; text the user SEES at that viewport row (via screen-display-cell), not the
+  ;; live-grid row at the same index.  Regression guard for the screen-cell ->
+  ;; screen-display-cell fix in %extract-row-chars.
+  (it "copy-mode-selection-honours-scroll-offset"
+    (let ((s (make-screen 8 3)))
+      (feed-lines s "AAA" "BBB" "CCC" "DDD" "EEE")
+      (cl-tmux/commands::copy-mode-enter s)
+      (cl-tmux/commands::copy-mode-scroll s 1000)   ; scroll fully back
+      (expect (plusp (screen-copy-offset s)))
+      (let ((w      (screen-width s))
+            (offset (screen-copy-offset s)))
+        (let ((expected (string-right-trim " " (display-row-string s 0))))
+          ;; Mark and cursor at viewport row 0; supply the offset so %selection-bounds
+          ;; can correctly compute virtual rows even though we're setting mark manually.
+          (setf (screen-copy-mark        s) (cons 0 0)
+                (screen-copy-mark-offset s) offset
+                (screen-copy-cursor      s) (cons 0 w)
+                (screen-copy-selecting   s) t)
+          (expect (string= expected
+                           (string-right-trim " " (or (cl-tmux/commands::%selection-text s) ""))))))))
+
+  ;; copy-mode-enter with :exit-on-bottom t sets the screen slot.
+  (it "copy-mode-enter-e-sets-exit-on-bottom"
+    (let ((s (make-screen 20 5)))
+      (cl-tmux/commands::copy-mode-enter s :exit-on-bottom t)
+      (expect (cl-tmux/terminal/types:screen-copy-exit-on-bottom s) :to-be-truthy)))
+
+  ;; With exit-on-bottom (copy-mode -e), scrolling back down to the live bottom
+  ;; (offset 0) auto-exits copy mode.
+  (it "copy-mode-e-auto-exits-on-scroll-to-bottom"
+    (let ((s (%screen-with-scrollback 3)))
+      ;; Re-enter with -e semantics and scroll up into the scrollback.
+      (cl-tmux/commands::copy-mode-enter s :exit-on-bottom t)
+      (cl-tmux/commands::copy-mode-scroll s 2)        ; scroll back 2 lines (offset 2)
+      (expect (= 2 (screen-copy-offset s)))
+      (expect (screen-copy-mode-p s) :to-be-truthy)
+      (cl-tmux/commands::copy-mode-scroll s -100)     ; race back to the live bottom
+      (expect (screen-copy-mode-p s) :to-be-falsy)))
+
+  ;; copy-mode -e does NOT exit while scrolling upward (positive delta).
+  (it "copy-mode-e-no-exit-while-scrolling-up"
+    (let ((s (%screen-with-scrollback 3)))
+      (cl-tmux/commands::copy-mode-enter s :exit-on-bottom t)
+      (cl-tmux/commands::copy-mode-scroll s 100)      ; scroll up to oldest
+      (expect (screen-copy-mode-p s) :to-be-truthy)))
+
+  ;; Outside copy mode, copy-mode-scroll does nothing: offset stays put and the
+  ;; call returns NIL.
+  (it "copy-mode-scroll-noop-when-not-in-copy-mode"
+    (let ((s (make-screen 20 5)))
+      (setf (screen-scrollback s) (list (make-array 0) (make-array 0)))
+      (expect (screen-copy-mode-p s) :to-be-falsy)
+      (expect (null (cl-tmux/commands::copy-mode-scroll s 100)))
+      (expect (= 0 (screen-copy-offset s)))))
+
+  ;;; ── select-window-by-number ─────────────────────────────────────────────────
+
+  ;; select-window-by-number activates the Nth (0-based) window.
+  (it "select-window-by-number-selects-nth-window"
+    (with-fake-session (s :nwindows 3)
+      (let ((w0 (first  (session-windows s)))
+            (w2 (third  (session-windows s))))
+        (expect (eq w0 (session-active-window s)))
+        (select-window-by-number s 2)
+        (expect (eq w2 (session-active-window s)))
+        (select-window-by-number s 0)
+        (expect (eq w0 (session-active-window s))))))
+
+  ;; select-window-by-number with an out-of-range index leaves the active window unchanged.
+  (it "select-window-by-number-out-of-range-is-noop"
+    (let* ((s      (make-fake-session :nwindows 2))
+           (before (session-active-window s)))
+      (select-window-by-number s 99)
+      (expect (eq before (session-active-window s)))))
+
+  ;; After killing a middle window, select-window-by-number still finds the
+  ;; window by its stored id, not by list position.
+  (it "select-window-by-id-stable-after-kill"
+    (let* ((w0 (make-window :id 0 :name "a" :width 20 :height 5
+                            :panes (list (%make-test-pane :id 1))))
+           (w1 (make-window :id 1 :name "b" :width 20 :height 5
+                            :panes (list (%make-test-pane :id 2))))
+           (w2 (make-window :id 2 :name "c" :width 20 :height 5
+                            :panes (list (%make-test-pane :id 3))))
+           (sess (make-session :id 1 :name "0" :windows (list w0 w1 w2))))
+      (session-select-window sess w0)
+      ;; Kill the middle window (id=1).
+      (kill-window sess w1)
+      ;; List is now [w0, w2].  select-window-by-number 2 must still find w2
+      ;; (id=2 is at list-position 1 after the kill).
+      (select-window-by-number sess 2)
+      (expect (eq w2 (session-active-window sess)))))
+
+  ;;; ── rename-session ──────────────────────────────────────────────────────────
+
+  ;; rename-session sets the session's name to the supplied string.
+  (it "rename-session-changes-session-name"
+    (let ((sess (make-session :id 1 :name "old" :windows nil)))
+      (cl-tmux/commands:rename-session sess "new")
+      (expect (string= "new" (session-name sess)))))
+
+  ;; rename-session with "" or NIL is a no-op: the session name remains unchanged.
+  (it "rename-session-ignores-invalid-names-table"
+    (dolist (row '((""  "empty string is a no-op")
+                   (nil "nil is a no-op")))
+      (destructuring-bind (new-name desc) row
+        (declare (ignore desc))
+        (let ((sess (make-session :id 1 :name "keep" :windows nil)))
+          (cl-tmux/commands:rename-session sess new-name)
+          (expect (string= "keep" (session-name sess))))))))

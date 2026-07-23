@@ -59,17 +59,15 @@
 (defmacro check-cursor (screen cx cy)
   "Assert that SCREEN's cursor is at column CX, row CY."
   `(progn
-     (is (= ,cx (screen-cursor-x ,screen))
-         "cursor-x: expected ~D got ~D" ,cx (screen-cursor-x ,screen))
-     (is (= ,cy (screen-cursor-y ,screen))
-         "cursor-y: expected ~D got ~D" ,cy (screen-cursor-y ,screen))))
+     (expect (= ,cx (screen-cursor-x ,screen)))
+     (expect (= ,cy (screen-cursor-y ,screen)))))
 
 (defmacro check-table (rows &key (test '#'=))
   "Assert each (ACTUAL EXPECTED DESC) row in ROWS with TEST."
   `(dolist (row ,rows)
      (destructuring-bind (actual expected desc) row
-       (is (funcall ,test expected actual)
-           "~A: expected ~S got ~S" desc expected actual))))
+       (declare (ignore desc))
+       (expect (funcall ,test expected actual)))))
 
 (defun row-blank-p (screen y)
   "Return T when every cell in row Y of SCREEN contains a space."

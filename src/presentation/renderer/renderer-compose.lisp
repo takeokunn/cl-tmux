@@ -9,21 +9,10 @@
 ;;;; Status-bar composition lives in renderer-statusbar.lisp (loaded just before
 ;;;; this file).
 ;;;;
-;;;; Load order: renderer-format → renderer-style → renderer-pane
-;;;;             → renderer-overlay → renderer-statusbar
+;;;; Load order (declared in cl-tmux.asd): renderer-format → renderer-style
+;;;;             → renderer-pane → renderer-overlay → renderer-statusbar
 ;;;;             → renderer-compose-protocols → renderer-compose-overlay
 ;;;;             → renderer-compose-effects → renderer-compose
-
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (let* ((source (or *load-truename* *compile-file-truename*))
-         (base (and source
-                    (make-pathname :name nil :type nil :defaults source))))
-    (dolist (name '("renderer-compose-protocols.lisp"
-                    "renderer-compose-overlay.lisp"
-                    "renderer-compose-effects.lisp"))
-      (let ((path (and base (merge-pathnames name base))))
-        (when (and path (probe-file path))
-          (load path))))))
 
 ;;; ── Lock-screen overlay ─────────────────────────────────────────────────────
 

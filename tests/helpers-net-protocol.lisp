@@ -49,9 +49,7 @@
   "Assert that FRAME round-trips with EXPECTED-TYPE."
   (multiple-value-bind (type payload) (round-trip-frame frame)
     (declare (ignore payload))
-    (is (= expected-type type)
-        "round-trip type mismatch: expected ~D got ~S"
-        expected-type type)))
+    (expect (= expected-type type))))
 
 (defun assert-round-tripped-frame-payload (frame check-fn)
   "Assert that FRAME round-trips and pass its payload to CHECK-FN."
@@ -67,9 +65,8 @@
    transport-level check."
   (multiple-value-bind (type payload next) (cl-tmux/protocol:decode-frame frame)
     (declare (ignore payload))
-    (is (= expected-type type)
-        "decode type mismatch: expected ~D got ~S" expected-type type)
-    (is (= (length frame) next) "consumed the whole frame")))
+    (expect (= expected-type type))
+    (expect (= (length frame) next))))
 
 (defun assert-decoded-frame-payload (frame check-fn)
   "Decode FRAME in-memory (via decode-frame, no file I/O) and pass its payload

@@ -2,270 +2,256 @@
 
 ;;;; rename hooks, server-access, customize-mode, copy-mode-toggle/append/copy-pipe — part VIII
 
-(in-suite commands-suite)
+(describe "commands-suite"
 
-;;; ── rename-window: fires hook ────────────────────────────────────────────────
+  ;;; ── rename-window: fires hook ────────────────────────────────────────────────
 
-(test rename-window-fires-after-rename-window-hook
-  "rename-window fires +hook-after-rename-window+ with the window and new name."
-  (with-isolated-hooks
-    (let ((hook-win nil)
-          (hook-name nil))
-      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-rename-window+
-                              (lambda (w n) (setf hook-win w hook-name n)))
-      (let ((win (make-window :id 1 :name "old" :width 20 :height 5 :panes nil)))
-        (rename-window win "new")
-        (is (eq win hook-win)
-            "hook must receive the renamed window"))
-      (is (stringp hook-name)
-          "hook must receive the new name as a string")
-      (is (string= "new" hook-name)
-          "hook name argument must equal the new name"))))
+  ;; rename-window fires +hook-after-rename-window+ with the window and new name.
+  (it "rename-window-fires-after-rename-window-hook"
+    (with-isolated-hooks
+      (let ((hook-win nil)
+            (hook-name nil))
+        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-rename-window+
+                                (lambda (w n) (setf hook-win w hook-name n)))
+        (let ((win (make-window :id 1 :name "old" :width 20 :height 5 :panes nil)))
+          (rename-window win "new")
+          (expect (eq win hook-win)))
+        (expect (stringp hook-name))
+        (expect (string= "new" hook-name)))))
 
-(test rename-window-disable-automatic-rename-flag
-  "A manual rename-window (default) disables automatic-rename; passing
-   :disable-automatic-rename NIL (the auto-rename path) keeps it on."
-  (let ((win (make-window :id 1 :name "x" :width 20 :height 5 :panes nil)))
-    (setf (window-automatic-rename-p win) t)
-    (rename-window win "manual")
-    (is-false (window-automatic-rename-p win)
-              "manual rename disables automatic-rename")
-    (setf (window-automatic-rename-p win) t)
-    (rename-window win "auto" :disable-automatic-rename nil)
-    (is-true (window-automatic-rename-p win)
-             ":disable-automatic-rename NIL keeps automatic-rename on")))
+  ;; A manual rename-window (default) disables automatic-rename; passing
+  ;; :disable-automatic-rename NIL (the auto-rename path) keeps it on.
+  (it "rename-window-disable-automatic-rename-flag"
+    (let ((win (make-window :id 1 :name "x" :width 20 :height 5 :panes nil)))
+      (setf (window-automatic-rename-p win) t)
+      (rename-window win "manual")
+      (expect (window-automatic-rename-p win) :to-be-falsy)
+      (setf (window-automatic-rename-p win) t)
+      (rename-window win "auto" :disable-automatic-rename nil)
+      (expect (window-automatic-rename-p win) :to-be-truthy)))
 
-(test rename-window-fires-window-renamed-hook
-  "rename-window also fires +hook-window-renamed+ (tmux's window-renamed hook)."
-  (with-isolated-hooks
-    (let ((fired nil))
-      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-window-renamed+
-                              (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-      (let ((win (make-window :id 1 :name "old" :width 20 :height 5 :panes nil)))
-        (rename-window win "new"))
-      (is-true fired "window-renamed hook must fire on rename"))))
-
-(test cmd-rename-session-fires-session-renamed-hook
-  "%cmd-rename-session fires +hook-session-renamed+."
-  (with-isolated-hooks
-    (let ((cl-tmux::*server-sessions* nil)
-          (s (make-fake-session :nwindows 1))
-          (fired nil))
-      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-session-renamed+
-                              (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-      (cl-tmux::%cmd-rename-session s '("newname"))
-      (is-true fired "session-renamed hook must fire on rename-session"))))
-
-(test cmd-select-pane-fires-after-select-pane-hook
-  "%cmd-select-pane fires +hook-after-select-pane+ regardless of which form it took."
-  (with-isolated-hooks
-    (with-fake-two-pane-session (s)
+  ;; rename-window also fires +hook-window-renamed+ (tmux's window-renamed hook).
+  (it "rename-window-fires-window-renamed-hook"
+    (with-isolated-hooks
       (let ((fired nil))
-        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-select-pane+
+        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-window-renamed+
                                 (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-        (cl-tmux::%cmd-select-pane s '("-m"))
-        (is-true fired "after-select-pane hook must fire")))))
+        (let ((win (make-window :id 1 :name "old" :width 20 :height 5 :panes nil)))
+          (rename-window win "new"))
+        (expect fired :to-be-truthy))))
 
-(test cmd-select-window-fires-after-select-window-hook
-  "%cmd-select-window fires +hook-after-select-window+ (tmux's per-command hook)."
-  (with-isolated-hooks
-    (with-fake-session (s :nwindows 2)
-      (let ((fired nil))
-        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-select-window+
+  ;; %cmd-rename-session fires +hook-session-renamed+.
+  (it "cmd-rename-session-fires-session-renamed-hook"
+    (with-isolated-hooks
+      (let ((cl-tmux::*server-sessions* nil)
+            (s (make-fake-session :nwindows 1))
+            (fired nil))
+        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-session-renamed+
                                 (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-        (cl-tmux::%cmd-select-window s '("-n"))   ; select next window
-        (is-true fired "after-select-window hook must fire")))))
+        (cl-tmux::%cmd-rename-session s '("newname"))
+        (expect fired :to-be-truthy))))
 
-(test session-window-changed-hook-fires-on-window-switch
-  "session-window-changed fires when the active window actually changes (the
-   focus-transition diff covers any switch path, not just select-window)."
-  (with-isolated-hooks
-    (with-fake-session (s :nwindows 2)
-      (let ((fired nil))
-        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-session-window-changed+
-                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-        (cl-tmux::%cmd-select-window s '("-n"))   ; switch to the next window
-        (is-true fired
-                 "session-window-changed must fire when the active window changes")))))
+  ;; %cmd-select-pane fires +hook-after-select-pane+ regardless of which form it took.
+  (it "cmd-select-pane-fires-after-select-pane-hook"
+    (with-isolated-hooks
+      (with-fake-two-pane-session (s)
+        (let ((fired nil))
+          (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-select-pane+
+                                  (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+          (cl-tmux::%cmd-select-pane s '("-m"))
+          (expect fired :to-be-truthy)))))
 
-(test window-pane-changed-hook-fires-on-pane-switch
-  "window-pane-changed fires when a window's active pane changes (any select-pane
-   path routes through %select-pane-with-focus's diff)."
-  (with-isolated-hooks
-    (with-fake-two-pane-session (s)
-      (let ((fired nil))
-        (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-window-pane-changed+
-                                (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-        (cl-tmux::%run-command-line s "select-pane -t 2")   ; switch to pane 2
-        (is-true fired
-                 "window-pane-changed must fire when the active pane changes")))))
+  ;; %cmd-select-window fires +hook-after-select-window+ (tmux's per-command hook).
+  (it "cmd-select-window-fires-after-select-window-hook"
+    (with-isolated-hooks
+      (with-fake-session (s :nwindows 2)
+        (let ((fired nil))
+          (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-select-window+
+                                  (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+          (cl-tmux::%cmd-select-window s '("-n"))   ; select next window
+          (expect fired :to-be-truthy)))))
 
-(test resize-pane-fires-after-resize-pane-hook
-  "resize-pane fires +hook-after-resize-pane+ (covers both the resize-pane command
-   and the C-b H/J/K/L keybind path, which share this function)."
-  (with-isolated-hooks
-    (with-fake-two-pane-session (s)
-      (let* ((win (cl-tmux/model:session-active-window s))
-             (fired nil))
-      (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-resize-pane+
-                              (lambda (&rest _) (declare (ignore _)) (setf fired t)))
-      (resize-pane win :up 2)
-      (is-true fired "after-resize-pane hook must fire")))))
+  ;; session-window-changed fires when the active window actually changes (the
+  ;; focus-transition diff covers any switch path, not just select-window).
+  (it "session-window-changed-hook-fires-on-window-switch"
+    (with-isolated-hooks
+      (with-fake-session (s :nwindows 2)
+        (let ((fired nil))
+          (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-session-window-changed+
+                                  (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+          (cl-tmux::%cmd-select-window s '("-n"))   ; switch to the next window
+          (expect fired :to-be-truthy)))))
 
-;;; ── server-access: access-control-list management ──────────────────────────
+  ;; window-pane-changed fires when a window's active pane changes (any select-pane
+  ;; path routes through %select-pane-with-focus's diff).
+  (it "window-pane-changed-hook-fires-on-pane-switch"
+    (with-isolated-hooks
+      (with-fake-two-pane-session (s)
+        (let ((fired nil))
+          (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-window-pane-changed+
+                                  (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+          (cl-tmux::%run-command-line s "select-pane -t 2")   ; switch to pane 2
+          (expect fired :to-be-truthy)))))
 
-(test server-access-add-permission-table
-  "server-access -a adds a user with the correct permission (default read-write; -r read-only)."
-  (dolist (row '(("server-access -a alice"   "alice" :read-write "default → :read-write")
-                 ("server-access -a -r bob"  "bob"   :read-only  "-r → :read-only")))
-    (destructuring-bind (cmd user expected desc) row
-      (with-fake-session (s :nwindows 1)
+  ;; resize-pane fires +hook-after-resize-pane+ (covers both the resize-pane command
+  ;; and the C-b H/J/K/L keybind path, which share this function).
+  (it "resize-pane-fires-after-resize-pane-hook"
+    (with-isolated-hooks
+      (with-fake-two-pane-session (s)
+        (let* ((win (cl-tmux/model:session-active-window s))
+               (fired nil))
+          (cl-tmux/hooks:add-hook cl-tmux/hooks:+hook-after-resize-pane+
+                                  (lambda (&rest _) (declare (ignore _)) (setf fired t)))
+          (resize-pane win :up 2)
+          (expect fired :to-be-truthy)))))
+
+  ;;; ── server-access: access-control-list management ──────────────────────────
+
+  ;; server-access -a adds a user with the correct permission (default read-write; -r read-only).
+  (it "server-access-add-permission-table"
+    (dolist (row '(("server-access -a alice"   "alice" :read-write "default → :read-write")
+                   ("server-access -a -r bob"  "bob"   :read-only  "-r → :read-only")))
+      (destructuring-bind (cmd user expected desc) row
+        (declare (ignore desc))
+        (with-fake-session (s :nwindows 1)
+          (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
+            (cl-tmux::%run-command-line s cmd)
+            (expect (equal expected
+                           (alist-value user cl-tmux::*server-access-list*
+                                        :test #'string=))))))))
+
+  ;; A bare `server-access -w USER` (no -a/-d) upgrades an existing entry to read-write.
+  (it "server-access-w-modifies-existing-user-permission"
+    (with-fake-session (s :nwindows 1)
+      (let ((cl-tmux::*server-access-list* (list (cons "carol" :read-only)))
+            (*overlay* nil))
+        (cl-tmux::%run-command-line s "server-access -w carol")
+        (expect (equal :read-write
+                       (alist-value "carol" cl-tmux::*server-access-list*
+                                    :test #'string=))))))
+
+  ;; Modifying (no -a) an unknown user is an error and must NOT create an entry,
+  ;; matching tmux's `server-access user` semantics.
+  (it "server-access-modify-unknown-user-is-error-no-entry-created"
+    (with-fake-session (s :nwindows 1)
       (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
-          (cl-tmux::%run-command-line s cmd)
-          (is (equal expected
-                     (alist-value user cl-tmux::*server-access-list*
-                                  :test #'string=))
-              "~A" desc))))))
+        (cl-tmux::%run-command-line s "server-access -w nobody")
+        (expect (null cl-tmux::*server-access-list*)))))
 
-(test server-access-w-modifies-existing-user-permission
-  "A bare `server-access -w USER` (no -a/-d) upgrades an existing entry to read-write."
-  (with-fake-session (s :nwindows 1)
-    (let ((cl-tmux::*server-access-list* (list (cons "carol" :read-only)))
-          (*overlay* nil))
-      (cl-tmux::%run-command-line s "server-access -w carol")
-      (is (equal :read-write
-                 (alist-value "carol" cl-tmux::*server-access-list*
-                              :test #'string=))
-          "-w must upgrade carol from read-only to read-write"))))
+  ;; server-access -d USER removes USER from the access list.
+  (it "server-access-delete-removes-user"
+    (with-fake-session (s :nwindows 1)
+      (let ((cl-tmux::*server-access-list*
+              (list (cons "alice" :read-write) (cons "bob" :read-only)))
+            (*overlay* nil))
+        (cl-tmux::%run-command-line s "server-access -d alice")
+        (expect (null (assoc "alice" cl-tmux::*server-access-list* :test #'string=)))
+        (expect (equal :read-only
+                       (alist-value "bob" cl-tmux::*server-access-list*
+                                    :test #'string=))))))
 
-(test server-access-modify-unknown-user-is-error-no-entry-created
-  "Modifying (no -a) an unknown user is an error and must NOT create an entry,
-   matching tmux's `server-access user` semantics."
-  (with-fake-session (s :nwindows 1)
-    (let ((cl-tmux::*server-access-list* nil) (*overlay* nil))
-      (cl-tmux::%run-command-line s "server-access -w nobody")
-      (is (null cl-tmux::*server-access-list*)
-          "modifying an unknown user must not add it to the list"))))
+  ;; server-access -l renders each entry as `name: permission` in the overlay.
+  (it "server-access-l-lists-entries-in-overlay"
+    (with-fake-session (s :nwindows 1)
+      (let ((cl-tmux::*server-access-list*
+              (list (cons "alice" :read-write)))
+            (*overlay* nil))
+        (cl-tmux::%run-command-line s "server-access -l")
+        (assert-overlay-contains "alice" (overlay-lines)
+                                 "server-access -l listing")
+        (assert-overlay-contains "read-write" (overlay-lines)
+                                 "server-access -l listing"))))
 
-(test server-access-delete-removes-user
-  "server-access -d USER removes USER from the access list."
-  (with-fake-session (s :nwindows 1)
-    (let ((cl-tmux::*server-access-list*
-            (list (cons "alice" :read-write) (cons "bob" :read-only)))
-          (*overlay* nil))
-      (cl-tmux::%run-command-line s "server-access -d alice")
-      (is (null (assoc "alice" cl-tmux::*server-access-list* :test #'string=))
-          "alice must be removed")
-      (is (equal :read-only
-                 (alist-value "bob" cl-tmux::*server-access-list*
-                              :test #'string=))
-          "bob must be left untouched"))))
+  ;; server-access rejects unsupported flags and extra positionals before changing the access list.
+  (it "server-access-rejects-unimplemented-kill-flag"
+    (with-fake-session (s :nwindows 1)
+      (dolist (args '(("-a" "-k" "dave")
+                      ("-a" "dave" "extra")))
+        (let* ((initial (list (cons "alice" :read-write)))
+               (cl-tmux::*server-access-list* (copy-tree initial))
+               (*overlay* nil))
+          (expect (cl-tmux::%cmd-server-access s args) :to-be-falsy)
+          (expect (equal initial cl-tmux::*server-access-list*))
+          (assert-overlay-contains "unsupported argument" *overlay*
+                                   args)))))
 
-(test server-access-l-lists-entries-in-overlay
-  "server-access -l renders each entry as `name: permission` in the overlay."
-  (with-fake-session (s :nwindows 1)
-    (let ((cl-tmux::*server-access-list*
-            (list (cons "alice" :read-write)))
-          (*overlay* nil))
-      (cl-tmux::%run-command-line s "server-access -l")
-      (assert-overlay-contains "alice" (overlay-lines)
-                               "server-access -l listing")
-      (assert-overlay-contains "read-write" (overlay-lines)
-                               "server-access -l listing"))))
+  ;;; ── bare (no-arg) forms of list-commands / list-panes ───────────────────────
 
-(test server-access-rejects-unimplemented-kill-flag
-  "server-access rejects unsupported flags and extra positionals before changing the access list."
-  (with-fake-session (s :nwindows 1)
-    (dolist (args '(("-a" "-k" "dave")
-                    ("-a" "dave" "extra")))
-      (let* ((initial (list (cons "alice" :read-write)))
-             (cl-tmux::*server-access-list* (copy-tree initial))
-             (*overlay* nil))
-        (is-false (cl-tmux::%cmd-server-access s args)
-                  "~S must be rejected" args)
-        (is (equal initial cl-tmux::*server-access-list*)
-            "~S must not mutate the access list" args)
-        (assert-overlay-contains "unsupported argument" *overlay*
-                                 args)))))
-
-;;; ── bare (no-arg) forms of list-commands / list-panes ───────────────────────
-
-(test bare-list-commands-lists-commands-not-unknown
-  "Bare `list-commands` (no args) must list commands, not error as unknown —
-   it falls through *arg-command-table* (args-only) to the named-command table."
-  (with-fake-session (s :nwindows 1)
-    (let ((*overlay* nil))
-      (cl-tmux::%run-command-line s "list-commands")
-      (assert-overlay-not-contains "unknown command" (overlay-lines)
-                                   "bare list-commands")
-      (assert-overlay-contains "new-window" (overlay-lines)
-                               "bare list-commands"))))
-
-(test bare-list-panes-lists-panes-not-unknown
-  "Bare `list-panes` (no args) must list the current window's panes."
-  (with-fake-two-pane-session (s)
-    (let ((*overlay* nil))
-      (cl-tmux::%run-command-line s "list-panes")
-      (assert-overlay-not-contains "unknown command" (overlay-lines)
-                                   "bare list-panes")
-      (assert-overlay-contains "(active)" (overlay-lines)
-                               "bare list-panes"))))
-
-;;; ── customize-mode: options/bindings customize tree ─────────────────────────
-
-(test customize-mode-renders-grouped-tree-with-option-values
-  "customize-mode renders the customize tree: grouped Session/Window Options with
-   a known option name + value, plus the Key Bindings group."
-  (with-fake-session (s :nwindows 1)
-    (let ((*overlay* nil))
-      (cl-tmux::%run-command-line s "customize-mode")
-      (assert-overlay-contains "Session/Window Options" (overlay-lines)
-                               "customize-mode tree")
-      (assert-overlay-contains "mode-keys" (overlay-lines)
-                               "customize-mode tree")
-      (assert-overlay-contains "Key Bindings" (overlay-lines)
-                               "customize-mode tree"))))
-
-(test customize-mode-f-filter-restricts-to-matching-entries
-  "customize-mode -f FILTER keeps only entries whose name/line contains FILTER
-   (case-insensitive substring) and drops the rest."
-  (with-fake-session (s :nwindows 1)
-    (let ((*overlay* nil))
-      (cl-tmux::%run-command-line s "customize-mode -f mode-keys")
-      (assert-overlay-contains "mode-keys" (overlay-lines)
-                               "customize-mode -f mode-keys")
-      (assert-overlay-not-contains "status-interval" (overlay-lines)
-                                    "customize-mode -f mode-keys"))))
-
-(test customize-mode-rejects-unsupported-arguments-before-rendering
-  "customize-mode rejects positional tokens it does not implement.  (The tmux
-   flags -N/-Z/-F/-t are accepted; only positional tokens are rejected.)"
-  (with-fake-session (s :nwindows 1)
-    (dolist (line '("customize-mode mode-keys"))
+  ;; Bare `list-commands` (no args) must list commands, not error as unknown —
+  ;; it falls through *arg-command-table* (args-only) to the named-command table.
+  (it "bare-list-commands-lists-commands-not-unknown"
+    (with-fake-session (s :nwindows 1)
       (let ((*overlay* nil))
-        (is (null (cl-tmux::%run-command-line s line))
-            "~A must be rejected" line)
-        (assert-overlay-contains "customize-mode: unsupported argument"
-                                 (overlay-lines) line)
-        (assert-overlay-not-contains "Session/Window Options"
-                                     (overlay-lines) line)))))
+        (cl-tmux::%run-command-line s "list-commands")
+        (assert-overlay-not-contains "unknown command" (overlay-lines)
+                                     "bare list-commands")
+        (assert-overlay-contains "new-window" (overlay-lines)
+                                 "bare list-commands"))))
 
-(test customize-mode-accepts-tmux-flags
-  "customize-mode accepts the tmux flags -N/-Z and -F/-t (whose arguments are
-   consumed) and renders the customize tree."
-  (with-fake-session (s :nwindows 1)
-    (dolist (line '("customize-mode -N"
-                    "customize-mode -Z"
-                    "customize-mode -t :.0"
-                    "customize-mode -F #{pane_id}"))
+  ;; Bare `list-panes` (no args) must list the current window's panes.
+  (it "bare-list-panes-lists-panes-not-unknown"
+    (with-fake-two-pane-session (s)
       (let ((*overlay* nil))
-        (cl-tmux::%run-command-line s line)
-        (assert-overlay-not-contains "unsupported argument"
-                                     (overlay-lines) line)))))
+        (cl-tmux::%run-command-line s "list-panes")
+        (assert-overlay-not-contains "unknown command" (overlay-lines)
+                                     "bare list-panes")
+        (assert-overlay-contains "(active)" (overlay-lines)
+                                 "bare list-panes"))))
 
-(test customize-mode-keyword-dispatch-opens-overlay
-  "The bare :customize-mode keybinding form opens the customize overlay."
-  (with-fake-session (s :nwindows 1)
-    (let ((*overlay* nil))
-      (cl-tmux::dispatch-command s :customize-mode nil)
-      (assert-overlay-active ":customize-mode must open an overlay"))))
+  ;;; ── customize-mode: options/bindings customize tree ─────────────────────────
+
+  ;; customize-mode renders the customize tree: grouped Session/Window Options with
+  ;; a known option name + value, plus the Key Bindings group.
+  (it "customize-mode-renders-grouped-tree-with-option-values"
+    (with-fake-session (s :nwindows 1)
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "customize-mode")
+        (assert-overlay-contains "Session/Window Options" (overlay-lines)
+                                 "customize-mode tree")
+        (assert-overlay-contains "mode-keys" (overlay-lines)
+                                 "customize-mode tree")
+        (assert-overlay-contains "Key Bindings" (overlay-lines)
+                                 "customize-mode tree"))))
+
+  ;; customize-mode -f FILTER keeps only entries whose name/line contains FILTER
+  ;; (case-insensitive substring) and drops the rest.
+  (it "customize-mode-f-filter-restricts-to-matching-entries"
+    (with-fake-session (s :nwindows 1)
+      (let ((*overlay* nil))
+        (cl-tmux::%run-command-line s "customize-mode -f mode-keys")
+        (assert-overlay-contains "mode-keys" (overlay-lines)
+                                 "customize-mode -f mode-keys")
+        (assert-overlay-not-contains "status-interval" (overlay-lines)
+                                      "customize-mode -f mode-keys"))))
+
+  ;; customize-mode rejects positional tokens it does not implement.  (The tmux
+  ;; flags -N/-Z/-F/-t are accepted; only positional tokens are rejected.)
+  (it "customize-mode-rejects-unsupported-arguments-before-rendering"
+    (with-fake-session (s :nwindows 1)
+      (dolist (line '("customize-mode mode-keys"))
+        (let ((*overlay* nil))
+          (expect (null (cl-tmux::%run-command-line s line)))
+          (assert-overlay-contains "customize-mode: unsupported argument"
+                                   (overlay-lines) line)
+          (assert-overlay-not-contains "Session/Window Options"
+                                       (overlay-lines) line)))))
+
+  ;; customize-mode accepts the tmux flags -N/-Z and -F/-t (whose arguments are
+  ;; consumed) and renders the customize tree.
+  (it "customize-mode-accepts-tmux-flags"
+    (with-fake-session (s :nwindows 1)
+      (dolist (line '("customize-mode -N"
+                      "customize-mode -Z"
+                      "customize-mode -t :.0"
+                      "customize-mode -F #{pane_id}"))
+        (let ((*overlay* nil))
+          (cl-tmux::%run-command-line s line)
+          (assert-overlay-not-contains "unsupported argument"
+                                       (overlay-lines) line)))))
+
+  ;; The bare :customize-mode keybinding form opens the customize overlay.
+  (it "customize-mode-keyword-dispatch-opens-overlay"
+    (with-fake-session (s :nwindows 1)
+      (let ((*overlay* nil))
+        (cl-tmux::dispatch-command s :customize-mode nil)
+        (assert-overlay-active ":customize-mode must open an overlay")))))

@@ -37,6 +37,6 @@
   "Assert that each (KEY EXPECTED MESSAGE) binding in ROWS is present."
   `(dolist (row (list ,@(mapcar (lambda (row) `(list ,@row)) rows)))
      (destructuring-bind (key expected message) row
+       (declare (ignore message))
        (let ((entry (cl-tmux/config:key-table-lookup ,table-name key)))
-         (is (eq expected (cl-tmux/config:key-table-command entry))
-             "~A ~A: ~A" ,table-name key message)))))
+         (expect (eq expected (cl-tmux/config:key-table-command entry)))))))

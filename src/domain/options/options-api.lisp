@@ -221,20 +221,12 @@
    Each level is a hash-table or NIL (to skip that level).  Returns the first
    present value, honoring present-but-falsey overrides via gethash present-p.
    Pure logic: no side-effects beyond hash lookups."
-  (multiple-value-bind (pane-value pane-present-p)
-      (if pane-options (gethash name pane-options) (values nil nil))
-    (if pane-present-p
-        pane-value
-        (multiple-value-bind (window-value window-present-p)
-            (if window-options (gethash name window-options) (values nil nil))
-          (if window-present-p
-              window-value
-              (multiple-value-bind (global-value global-present-p)
-                  (gethash name *global-options*)
-                (if global-present-p
-                    global-value
-                    (let ((spec (gethash name *option-registry*)))
-                      (when spec (option-spec-default spec))))))))))
+  (dolist (table (list pane-options window-options *global-options*))
+    (when table
+      (multiple-value-bind (value present-p) (gethash name table)
+        (when present-p (return-from %resolve-option-in-scope-chain value)))))
+  (let ((spec (gethash name *option-registry*)))
+    (when spec (option-spec-default spec))))
 
 (defun get-option-for-context (name &key pane window)
   "Resolve option NAME with full tmux scope precedence: pane-local -> window-local

@@ -7,58 +7,29 @@
 
 (defmacro check-row (screen y expected-string)
   "Assert that row Y of SCREEN starts with EXPECTED-STRING."
-  `(is (string= ,expected-string
-                (row-string ,screen ,y :end (length ,expected-string)))
-       "row ~D: expected ~S got ~S"
-       ,y ,expected-string
-       (row-string ,screen ,y :end (length ,expected-string))))
+  `(expect (string= ,expected-string
+                    (row-string ,screen ,y :end (length ,expected-string)))))
 
 (defmacro check-cell (screen x y &key char fg bg attrs)
   "Assert cell attributes at column X, row Y of SCREEN.
    Only non-NIL keyword arguments are checked."
   (let ((forms '()))
     (when char
-      (push `(is (char= ,char (char-at ,screen ,x ,y))
-                 "char at (~D,~D): expected ~C got ~C" ,x ,y ,char
-                 (char-at ,screen ,x ,y))
-            forms))
+      (push `(expect (char= ,char (char-at ,screen ,x ,y))) forms))
     (when fg
-      (push `(is (= ,fg (fg-at ,screen ,x ,y))
-                 "fg at (~D,~D): expected ~D got ~D" ,x ,y ,fg
-                 (fg-at ,screen ,x ,y))
-            forms))
+      (push `(expect (= ,fg (fg-at ,screen ,x ,y))) forms))
     (when bg
-      (push `(is (= ,bg (bg-at ,screen ,x ,y))
-                 "bg at (~D,~D): expected ~D got ~D" ,x ,y ,bg
-                 (bg-at ,screen ,x ,y))
-            forms))
+      (push `(expect (= ,bg (bg-at ,screen ,x ,y))) forms))
     (when attrs
-      (push `(is (= ,attrs (attrs-at ,screen ,x ,y))
-                 "attrs at (~D,~D): expected #x~X got #x~X" ,x ,y ,attrs
-                 (attrs-at ,screen ,x ,y))
-            forms))
+      (push `(expect (= ,attrs (attrs-at ,screen ,x ,y))) forms))
     `(progn ,@(nreverse forms))))
 
 (defmacro check-sgr-state (screen &key (fg 7) (bg 0) (attrs 0))
   "Assert the current SGR pen state (foreground, background, attribute bitmask)."
   `(progn
-     (is (= ,fg (cl-tmux/terminal/types:screen-cur-fg ,screen))
-         "cur-fg: expected ~D got ~D" ,fg
-         (cl-tmux/terminal/types:screen-cur-fg ,screen))
-     (is (= ,bg (cl-tmux/terminal/types:screen-cur-bg ,screen))
-         "cur-bg: expected ~D got ~D" ,bg
-         (cl-tmux/terminal/types:screen-cur-bg ,screen))
-     (is (= ,attrs (cl-tmux/terminal/types:screen-cur-attrs ,screen))
-         "cur-attrs: expected #x~X got #x~X" ,attrs
-         (cl-tmux/terminal/types:screen-cur-attrs ,screen))))
-
-(defmacro with-filled-screen ((var w h fill-char) &body body)
-  "Bind VAR to a W×H screen pre-filled with FILL-CHAR, then run BODY."
-  `(let ((,var (make-screen ,w ,h)))
-     (dotimes (row ,h)
-       (dotimes (col ,w)
-         (feed ,var (string ,fill-char))))
-     ,@body))
+     (expect (= ,fg (cl-tmux/terminal/types:screen-cur-fg ,screen)))
+     (expect (= ,bg (cl-tmux/terminal/types:screen-cur-bg ,screen)))
+     (expect (= ,attrs (cl-tmux/terminal/types:screen-cur-attrs ,screen)))))
 
 (defmacro with-command-test-state ((sess &key overlay) &body body)
   "Run BODY with a single-session server state and a clean dirty flag."
@@ -82,11 +53,9 @@
                                               description)
                                         &body body)
   "Assert that COMMAND-FORM is rejected and reports OVERLAY-MESSAGE."
+  (declare (ignore description))
   `(with-command-test-state (,sess :overlay t)
-     (is (null ,command-form)
-         "~A must be rejected" ,description)
-     (is (search ,overlay-message *overlay*)
-         "~A must explain that the argument is unsupported" ,description)
+     (expect (null ,command-form))
+     (expect (search ,overlay-message *overlay*))
      ,@body
-     (is-false cl-tmux::*dirty*
-               "~A must not mark the model dirty after rejection" ,description)))
+     (expect cl-tmux::*dirty* :to-be-falsy)))

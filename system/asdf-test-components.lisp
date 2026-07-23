@@ -5,11 +5,11 @@
      :serial t
      :components
       ((:file "package")
-       (:file "fiveam-compat")   ; FiveAM-surface shim over cl-weave (must precede suite)
        (:file "suite")
        (:file "helpers-isolation")
       (:file "helpers-terminal-builders")
       (:file "helpers-render-output")
+      (:file "helpers-events-cps")
       (:file "helpers-key-bindings")
       (:file "helpers-overlay-assertions")
       (:file "helpers-session-naming")
@@ -127,8 +127,7 @@
         (:module "domain/buffer"
          :serial t
          :components
-         ((:file "buffer-tests-support")
-          (:file "buffer-tests-ring")
+         ((:file "buffer-tests-ring")
           (:file "buffer-tests-clipboard")
           (:file "buffer-tests-named")))
         (:module "infrastructure/control-mode"
@@ -182,7 +181,12 @@
           (:file "renderer-tests-f") ; renderer - part VI (parse-style-string, style-to-sgr, status-length, window-status-format, render-popup/menu)
           (:file "renderer-tests-c") ; renderer - part III (mouse/focus/keys, lock-screen, justify, cursor-shape, zoom-suppression)
           (:file "renderer-tests-e") ; renderer - part V (%clamp-status-segment, cursor-shape in output, status-bar-line gap, inline-style, bell relay)
-          (:file "renderer-tests-g"))) ; renderer - part VII (%split-align-attr, %status-align-buckets, %status-bar-default-segments, %content-search-match-p flag matrix)
+          (:file "renderer-tests-g") ; renderer - part VII (%split-align-attr, %status-align-buckets, %status-bar-default-segments, %content-search-match-p flag matrix)
+         (:file "renderer-statusbar-layout-tests") ; direct unit tests for the previously-untested statusbar-layout helpers
+         (:file "renderer-pane-selection-tests") ; direct unit tests for %compute-selection-bounds
+         (:file "renderer-compose-effects-tests") ; direct unit tests for %render-passthrough/%render-clipboard drain gating
+         (:file "renderer-overlay-layer-tests") ; direct unit tests for %render-overlay-layer's popup>menu>overlay>cursor priority dispatch
+         (:file "renderer-pane-search-tests"))) ; direct unit tests for %render-copy-search-matches's current-vs-plain match style branch
         (:module "application/dispatch"
          :serial t
          :components

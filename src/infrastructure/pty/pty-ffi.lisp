@@ -12,12 +12,11 @@
   (require :sb-posix))
 
 ;;; ── CFFI: libc surface (no extra library needed) ───────────────────────────
-
-;;; Raw fd read / write
-(cffi:defcfun ("read"  %read)  :long
-  (fd :int) (buf :pointer) (count :unsigned-long))
-(cffi:defcfun ("write" %write) :long
-  (fd :int) (buf :pointer) (count :unsigned-long))
+;;;
+;;; Byte-transparent master-fd read/write no longer lives here: pty-write /
+;;; pty-read-blocking delegate to cl-tty-kit's fd-read-octets / fd-write-octets.
+;;; select(2) stays — cl-tmux multiplexes PTY + socket + stdin fds itself, and
+;;; cl-tty-kit exposes no select.
 
 ;;; select(2)
 (cffi:defcfun ("select" %select) :int
@@ -30,9 +29,7 @@
 ;;; ── Platform constants ─────────────────────────────────────────────────────
 
 ;;; Standard file descriptor numbers
-(defconstant +stdin-fd+  0 "Standard input.")
 (defconstant +stdout-fd+ 1 "Standard output.")
-(defconstant +stderr-fd+ 2 "Standard error.")
 
 ;;; POSIX signal numbers
 (defconstant +sighup+ 1 "POSIX SIGHUP — sent to a process group leader on terminal close.")

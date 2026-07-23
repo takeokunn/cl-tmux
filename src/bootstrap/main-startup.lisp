@@ -32,8 +32,7 @@
 (defun %apply-global-cli-invocation (invocation)
   "Apply INVOCATION's parsed global options as side effects (socket overrides,
    config-file override, colour-capability downsampling) and return the
-   remaining :mode-args rest positional — the mode word plus its own args,
-   exactly what %consume-global-socket-flags used to return."
+   remaining :mode-args rest positional — the mode word plus its own args."
   (let ((socket-name (cl-cli:option-value invocation :socket-name))
         (socket-path (cl-cli:option-value invocation :socket-path))
         (file        (cl-cli:option-value invocation :file)))

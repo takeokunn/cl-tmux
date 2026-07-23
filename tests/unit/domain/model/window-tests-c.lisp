@@ -3,272 +3,251 @@
 ;;;; window tests — part C: find-window-by-name, list-windows-format,
 ;;;; auto-rename-from-osc, format-window, move/swap/rotate coverage.
 
-(in-suite model-suite)
+(describe "model-suite"
 
-(test find-window-by-name
-  "%format-window-list includes matching window names."
-  (let* ((w0 (make-window :id 1 :name "bash" :width 80 :height 24
-                          :panes (list (make-no-pty-pane 1 0 0 80 24))))
-         (w1 (make-window :id 2 :name "vim" :width 80 :height 24
-                          :panes (list (make-no-pty-pane 2 0 0 80 24))))
-         (sess (make-session :id 1 :name "s" :windows (list w0 w1))))
-    (session-select-window sess w0)
-    (let ((listing (cl-tmux::%format-window-list sess)))
-      (is (search "bash" listing) "listing must contain window name 'bash'")
-      (is (search "vim"  listing) "listing must contain window name 'vim'"))))
+  ;; %format-window-list includes matching window names.
+  (it "find-window-by-name"
+    (let* ((w0 (make-window :id 1 :name "bash" :width 80 :height 24
+                            :panes (list (make-no-pty-pane 1 0 0 80 24))))
+           (w1 (make-window :id 2 :name "vim" :width 80 :height 24
+                            :panes (list (make-no-pty-pane 2 0 0 80 24))))
+           (sess (make-session :id 1 :name "s" :windows (list w0 w1))))
+      (session-select-window sess w0)
+      (let ((listing (cl-tmux::%format-window-list sess)))
+        (expect (search "bash" listing))
+        (expect (search "vim"  listing)))))
 
-;;; ── list-windows-format ──────────────────────────────────────────────────────
+  ;; ── list-windows-format ──────────────────────────────────────────────────────
 
-(test list-windows-format
-  "%format-window-list includes the window's stored id, name, dimensions, and active marker."
-  (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
-         ;; Use id=0 so that the listing shows "0:" as the index prefix.
-         (w0  (make-window :id 0 :name "main" :width 80 :height 24
-                           :panes (list p0)))
-         (sess (make-session :id 1 :name "s" :windows (list w0))))
-    (session-select-window sess w0)
-    (let ((listing (cl-tmux::%format-window-list sess)))
-      (is (search "main"    listing) "listing must include window name")
-      (is (search "80x24"   listing) "listing must include dimensions")
-      (is (search "[active]" listing) "active window must be marked [active]")
-      (is (search "0:"      listing) "listing must include the window-id (0) as prefix"))))
+  ;; %format-window-list includes the window's stored id, name, dimensions, and active marker.
+  (it "list-windows-format"
+    (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
+           ;; Use id=0 so that the listing shows "0:" as the index prefix.
+           (w0  (make-window :id 0 :name "main" :width 80 :height 24
+                             :panes (list p0)))
+           (sess (make-session :id 1 :name "s" :windows (list w0))))
+      (session-select-window sess w0)
+      (let ((listing (cl-tmux::%format-window-list sess)))
+        (expect (search "main"    listing))
+        (expect (search "80x24"   listing))
+        (expect (search "[active]" listing))
+        (expect (search "0:"      listing)))))
 
-;;; ── auto-rename-from-osc ─────────────────────────────────────────────────────
-;;;
-;;; These tests call the production function cl-tmux::%maybe-rename-window-from-title
-;;; directly, rather than duplicating the rename logic inline.  This ensures the
-;;; tests verify the real code path and provide genuine coverage confidence.
+  ;; ── auto-rename-from-osc ─────────────────────────────────────────────────────
+  ;;
+  ;; These tests call the production function cl-tmux::%maybe-rename-window-from-title
+  ;; directly, rather than duplicating the rename logic inline.  This ensures the
+  ;; tests verify the real code path and provide genuine coverage confidence.
 
-(test auto-rename-from-osc
-  "When window-automatic-rename-p is T, window-name is updated from OSC title."
-  (with-auto-rename-session (screen p0 w0 sess :win-name "original")
-    (setf (window-automatic-rename-p w0) t)
-    (setf (screen-title screen) "new-title")
-    (cl-tmux::%maybe-rename-window-from-title sess)
-    (is (string= "new-title" (window-name w0))
-        "window-name must be updated from OSC title when automatic-rename is enabled")))
+  ;; When window-automatic-rename-p is T, window-name is updated from OSC title.
+  (it "auto-rename-from-osc"
+    (with-auto-rename-session (screen p0 w0 sess :win-name "original")
+      (setf (window-automatic-rename-p w0) t)
+      (setf (screen-title screen) "new-title")
+      (cl-tmux::%maybe-rename-window-from-title sess)
+      (expect (string= "new-title" (window-name w0)))))
 
-(test auto-rename-disabled-ignores-osc
-  "When window-automatic-rename-p is NIL, window-name is NOT updated from OSC title."
-  (with-auto-rename-session (screen p0 w0 sess :win-name "kept")
-    (setf (window-automatic-rename-p w0) nil)
-    (setf (screen-title screen) "ignored-title")
-    (cl-tmux::%maybe-rename-window-from-title sess)
-    (is (string= "kept" (window-name w0))
-        "window-name must NOT change when automatic-rename is disabled")))
+  ;; When window-automatic-rename-p is NIL, window-name is NOT updated from OSC title.
+  (it "auto-rename-disabled-ignores-osc"
+    (with-auto-rename-session (screen p0 w0 sess :win-name "kept")
+      (setf (window-automatic-rename-p w0) nil)
+      (setf (screen-title screen) "ignored-title")
+      (cl-tmux::%maybe-rename-window-from-title sess)
+      (expect (string= "kept" (window-name w0)))))
 
-;;; ── window-remove-pane (no PTY) ──────────────────────────────────────────────
+  ;; ── window-remove-pane (no PTY) ──────────────────────────────────────────────
 
-(test window-remove-pane-empties-single-pane-window
-  "window-remove-pane on a single-pane window returns NIL and clears the tree."
-  (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
-         (win (make-window :id 1 :name "w" :width 80 :height 24
-                           :panes (list p0)
-                           :tree (make-layout-leaf p0))))
-    (window-select-pane win p0)
-    (let ((result (window-remove-pane win p0)))
-      (is (null result)
-          "window-remove-pane on a sole pane must return NIL (no survivor)")
-      (is (null (window-panes win))
-          "window panes list must be empty after removing the sole pane")
-      (is (null (window-tree win))
-          "window tree must be NIL after removing the sole pane"))))
-
-(test window-remove-pane-returns-sibling
-  "window-remove-pane returns the surviving sibling pane after removing one of two."
-  (with-h-split-window (win p0 p1)
-    (let ((survivor (window-remove-pane win p0)))
-      (is (not (null survivor))
-          "window-remove-pane must return the surviving pane")
-      (is (= 1 (length (window-panes win)))
-          "one pane must remain after removing one of two"))))
-
-;;; ── window-last-active-time slot ─────────────────────────────────────────────
-
-(test window-last-active-time-updated-on-select
-  "window-select-pane updates window-last-active-time to a recent value."
-  (let* ((p0  (make-no-pty-pane 1 0 0 20 5))
-         (win (make-window :id 1 :name "w" :width 20 :height 5
-                           :panes (list p0) :last-active-time 0)))
-    (let ((before (get-universal-time)))
+  ;; window-remove-pane on a single-pane window returns NIL and clears the tree.
+  (it "window-remove-pane-empties-single-pane-window"
+    (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
+           (win (make-window :id 1 :name "w" :width 80 :height 24
+                             :panes (list p0)
+                             :tree (make-layout-leaf p0))))
       (window-select-pane win p0)
-      (is (>= (window-last-active-time win) before)
-          "window-last-active-time must be updated when a pane is selected"))))
+      (let ((result (window-remove-pane win p0)))
+        (expect (null result))
+        (expect (null (window-panes win)))
+        (expect (null (window-tree win))))))
 
-;;; ── window-layout-cycle-index slot ──────────────────────────────────────────
+  ;; window-remove-pane returns the surviving sibling pane after removing one of two.
+  (it "window-remove-pane-returns-sibling"
+    (with-h-split-window (win p0 p1)
+      (let ((survivor (window-remove-pane win p0)))
+        (expect (not (null survivor)))
+        (expect (= 1 (length (window-panes win)))))))
 
-(test window-layout-cycle-index-defaults-zero
-  "window-layout-cycle-index defaults to 0 for a freshly created window."
-  (let ((win (make-window :id 1 :name "w")))
-    (is (= 0 (window-layout-cycle-index win))
-        "window-layout-cycle-index must default to 0")))
+  ;; ── window-last-active-time slot ─────────────────────────────────────────────
 
-;;; ── ensure-window-fits with matching size ────────────────────────────────────
-;;;
-;;; This test is identical in structure to window-tests.lisp's existing
-;;; ensure-window-fits-noop-when-size-matches but targets the update of
-;;; window-width/height as the observable: if size differs, relayout runs;
-;;; if same, dimensions stay untouched.
+  ;; window-select-pane updates window-last-active-time to a recent value.
+  (it "window-last-active-time-updated-on-select"
+    (let* ((p0  (make-no-pty-pane 1 0 0 20 5))
+           (win (make-window :id 1 :name "w" :width 20 :height 5
+                             :panes (list p0) :last-active-time 0)))
+      (let ((before (get-universal-time)))
+        (window-select-pane win p0)
+        (expect (>= (window-last-active-time win) before)))))
 
-(test ensure-window-fits-does-not-mutate-on-matching-size
-  "ensure-window-fits leaves pane geometry untouched when size already matches."
-  (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
-         (win (make-window :id 1 :name "w" :width 80 :height 24
-                           :tree (make-layout-leaf p0)
-                           :panes (list p0) :active p0)))
-    (let ((x0-before (pane-x p0))
-          (y0-before (pane-y p0)))
-      (cl-tmux/model::ensure-window-fits win 24 80)
-      (is (= x0-before (pane-x p0))
-          "pane-x must not change when size already matches")
-      (is (= y0-before (pane-y p0))
-          "pane-y must not change when size already matches"))))
+  ;; ── window-layout-cycle-index slot ──────────────────────────────────────────
 
-;;; ── window struct default slots ─────────────────────────────────────────────
+  ;; window-layout-cycle-index defaults to 0 for a freshly created window.
+  (it "window-layout-cycle-index-defaults-zero"
+    (let ((win (make-window :id 1 :name "w")))
+      (expect (= 0 (window-layout-cycle-index win)))))
 
-(test window-slot-defaults-table
-  "Freshly created window slots have expected defaults: zoom-p=nil, zoom-tree=nil, last-active=nil, automatic-rename-p=t."
-  (dolist (c '((cl-tmux/model:window-zoom-p      nil "window-zoom-p defaults nil")
-               (cl-tmux/model:window-zoom-tree    nil "window-zoom-tree defaults nil")
-               (window-last-active                nil "window-last-active defaults nil")
-               (window-automatic-rename-p          t  "window-automatic-rename-p defaults t")))
-    (destructuring-bind (accessor expected desc) c
-      (let ((win (make-window :id 1 :name "w")))
-        (is (equal expected (funcall accessor win)) "~A" desc)))))
+  ;; ── ensure-window-fits with matching size ────────────────────────────────────
+  ;;
+  ;; This test is identical in structure to window-tests.lisp's existing
+  ;; ensure-window-fits-noop-when-size-matches but targets the update of
+  ;; window-width/height as the observable: if size differs, relayout runs;
+  ;; if same, dimensions stay untouched.
 
-(test window-automatic-rename-p-settable
-  "window-automatic-rename-p can be set to NIL and read back."
-  (let ((win (make-window :id 1 :name "w" :automatic-rename-p nil)))
-    (is (null (window-automatic-rename-p win))
-        "window-automatic-rename-p must reflect the value set at construction")))
+  ;; ensure-window-fits leaves pane geometry untouched when size already matches.
+  (it "ensure-window-fits-does-not-mutate-on-matching-size"
+    (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
+           (win (make-window :id 1 :name "w" :width 80 :height 24
+                             :tree (make-layout-leaf p0)
+                             :panes (list p0) :active p0)))
+      (let ((x0-before (pane-x p0))
+            (y0-before (pane-y p0)))
+        (cl-tmux/model::ensure-window-fits win 24 80)
+        (expect (= x0-before (pane-x p0)))
+        (expect (= y0-before (pane-y p0))))))
 
-;;; ── window-active-pane falls back to first pane ─────────────────────────────
+  ;; ── window struct default slots ─────────────────────────────────────────────
 
-(test window-active-pane-falls-back-to-first-pane
-  "window-active-pane returns the first pane when active slot is NIL."
-  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
-         (p1  (make-no-pty-pane 2 41 0 40 24))
-         ;; No active pane set.
-         (win (make-window :id 1 :name "w" :panes (list p0 p1))))
-    (is (eq p0 (window-active-pane win))
-        "window-active-pane must fall back to the first pane when active is NIL")))
+  ;; Freshly created window slots have expected defaults: zoom-p=nil, zoom-tree=nil, last-active=nil, automatic-rename-p=t.
+  (it "window-slot-defaults-table"
+    (dolist (c '((cl-tmux/model:window-zoom-p      nil "window-zoom-p defaults nil")
+                 (cl-tmux/model:window-zoom-tree    nil "window-zoom-tree defaults nil")
+                 (window-last-active                nil "window-last-active defaults nil")
+                 (window-automatic-rename-p          t  "window-automatic-rename-p defaults t")))
+      (destructuring-bind (accessor expected desc) c
+        (declare (ignore desc))
+        (let ((win (make-window :id 1 :name "w")))
+          (expect (equal expected (funcall accessor win)))))))
 
-;;; ── window-select-pane records previous active as last-active ──────────────
+  ;; window-automatic-rename-p can be set to NIL and read back.
+  (it "window-automatic-rename-p-settable"
+    (let ((win (make-window :id 1 :name "w" :automatic-rename-p nil)))
+      (expect (null (window-automatic-rename-p win)))))
 
-(test window-select-pane-records-previous-as-last-active
-  "window-select-pane records the previously active pane in window-last-active."
-  (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
-         (p1  (make-no-pty-pane 2 41 0 40 24))
-         (win (make-window :id 1 :name "w" :panes (list p0 p1))))
-    (window-select-pane win p0)
-    (is (null (window-last-active win))
-        "last-active must be NIL after first select (no prior pane)")
-    (window-select-pane win p1)
-    (is (eq p0 (window-last-active win))
-        "last-active must be the previously active pane after switching")))
+  ;; ── window-active-pane falls back to first pane ─────────────────────────────
 
-;;; ── window-remove-pane: leaf not in tree ────────────────────────────────────
+  ;; window-active-pane returns the first pane when active slot is NIL.
+  (it "window-active-pane-falls-back-to-first-pane"
+    (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+           (p1  (make-no-pty-pane 2 41 0 40 24))
+           ;; No active pane set.
+           (win (make-window :id 1 :name "w" :panes (list p0 p1))))
+      (expect (eq p0 (window-active-pane win)))))
 
-(test window-remove-pane-absent-pane-returns-first-pane
-  "window-remove-pane returns the first pane when the target leaf is absent from the tree."
-  (let* ((p0  (make-no-pty-pane 1 0 0 40 24))
-         (p1  (make-no-pty-pane 2 41 0 40 24))
-         ;; Build window with p0 in the tree; p1 is not in the tree.
-         (win (make-window :id 1 :name "w" :width 81 :height 24
-                           :panes (list p0 p1)
-                           :tree (make-layout-leaf p0))))
-    ;; Removing p1 which is absent from the tree should return the first pane.
-    (let ((result (window-remove-pane win p1)))
-      (is-true result "result must be non-NIL (the first pane)")
-      ;; The tree should be unchanged.
-      (is-true (window-tree win) "tree must remain non-NIL"))))
+  ;; ── window-select-pane records previous active as last-active ──────────────
 
-;;; ── Table-driven %new-split-ratio (additional boundary cases) ───────────────
+  ;; window-select-pane records the previously active pane in window-last-active.
+  (it "window-select-pane-records-previous-as-last-active"
+    (let* ((p0  (make-no-pty-pane 1  0 0 40 24))
+           (p1  (make-no-pty-pane 2 41 0 40 24))
+           (win (make-window :id 1 :name "w" :panes (list p0 p1))))
+      (window-select-pane win p0)
+      (expect (null (window-last-active win)))
+      (window-select-pane win p1)
+      (expect (eq p0 (window-last-active win)))))
 
-(test new-split-ratio-additional-cases
-  "Table-driven: %new-split-ratio handles boundary and asymmetric ratio cases."
-  ;; Each entry: (orient avail cur-ratio delta grow-first expected description)
-  ;; These cases extend beyond the single tests (basic-grow/shrink/blocked-by-floor).
-  (dolist (entry
-           '((:h 100 3/4 10 t   85/100 "grow :h from 3/4 ratio")
-             (:v 40  1/4  5 t   15/40  "grow :v from 1/4 ratio")
-             (:h 60  2/3  1 nil 39/60  "shrink :h from 2/3 ratio")))
-    (destructuring-bind (orient avail cur-ratio delta grow-first expected desc) entry
-      (let ((result (cl-tmux/model::%new-split-ratio orient avail cur-ratio delta grow-first)))
-        (is (equal expected result) desc)))))
+  ;; ── window-remove-pane: leaf not in tree ────────────────────────────────────
 
-;;; ── window-rotate single-pane is noop ───────────────────────────────────────
+  ;; window-remove-pane returns the first pane when the target leaf is absent from the tree.
+  (it "window-remove-pane-absent-pane-returns-first-pane"
+    (let* ((p0  (make-no-pty-pane 1 0 0 40 24))
+           (p1  (make-no-pty-pane 2 41 0 40 24))
+           ;; Build window with p0 in the tree; p1 is not in the tree.
+           (win (make-window :id 1 :name "w" :width 81 :height 24
+                             :panes (list p0 p1)
+                             :tree (make-layout-leaf p0))))
+      ;; Removing p1 which is absent from the tree should return the first pane.
+      (let ((result (window-remove-pane win p1)))
+        (expect result :to-be-truthy)
+        ;; The tree should be unchanged.
+        (expect (window-tree win) :to-be-truthy))))
 
-(test window-rotate-single-pane-noop
-  "window-rotate on a single-pane window changes nothing."
-  (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
-         (win (make-window :id 1 :name "w" :width 80 :height 24
-                           :panes (list p0)
-                           :tree (make-layout-leaf p0))))
-    (window-rotate win :up)
-    (is (equal (list p0) (window-panes win))
-        "single-pane window panes list unchanged after :up rotate")
-    (window-rotate win :down)
-    (is (equal (list p0) (window-panes win))
-        "single-pane window panes list unchanged after :down rotate")))
+  ;; ── Table-driven %new-split-ratio (additional boundary cases) ───────────────
 
-;;; ── window-id and window-name accessors ─────────────────────────────────────
+  ;; Table-driven: %new-split-ratio handles boundary and asymmetric ratio cases.
+  (it "new-split-ratio-additional-cases"
+    ;; Each entry: (orient avail cur-ratio delta grow-first expected description)
+    ;; These cases extend beyond the single tests (basic-grow/shrink/blocked-by-floor).
+    (dolist (entry
+             '((:h 100 3/4 10 t   85/100 "grow :h from 3/4 ratio")
+               (:v 40  1/4  5 t   15/40  "grow :v from 1/4 ratio")
+               (:h 60  2/3  1 nil 39/60  "shrink :h from 2/3 ratio")))
+      (destructuring-bind (orient avail cur-ratio delta grow-first expected desc) entry
+        (declare (ignore desc))
+        (let ((result (cl-tmux/model::%new-split-ratio orient avail cur-ratio delta grow-first)))
+          (expect (equal expected result))))))
 
-(test window-id-slot-accessible
-  "window-id returns the id passed to make-window."
-  (let ((win (make-window :id 42 :name "test")))
-    (is (= 42 (window-id win))
-        "window-id must return the id set at construction")))
+  ;; ── window-rotate single-pane is noop ───────────────────────────────────────
 
-(test window-name-slot-accessible
-  "window-name returns the name passed to make-window."
-  (let ((win (make-window :id 1 :name "mywin")))
-    (is (string= "mywin" (window-name win))
-        "window-name must return the name set at construction")))
+  ;; window-rotate on a single-pane window changes nothing.
+  (it "window-rotate-single-pane-noop"
+    (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
+           (win (make-window :id 1 :name "w" :width 80 :height 24
+                             :panes (list p0)
+                             :tree (make-layout-leaf p0))))
+      (window-rotate win :up)
+      (expect (equal (list p0) (window-panes win)))
+      (window-rotate win :down)
+      (expect (equal (list p0) (window-panes win)))))
 
-;;; ── window-width and window-height accessors ────────────────────────────────
+  ;; ── window-id and window-name accessors ─────────────────────────────────────
 
-(test window-width-height-slot-accessible
-  "window-width and window-height return the geometry set at construction."
-  (let ((win (make-window :id 1 :name "w" :width 120 :height 40)))
-    (is (= 120 (window-width  win)) "window-width must return 120")
-    (is (= 40  (window-height win)) "window-height must return 40")))
+  ;; window-id returns the id passed to make-window.
+  (it "window-id-slot-accessible"
+    (let ((win (make-window :id 42 :name "test")))
+      (expect (= 42 (window-id win)))))
 
-;;; ── pane-window back-pointer wiring ──────────────────────────────────────────
-;;;
-;;; pane-window is set by window-split and %attach-full-screen-pane (production),
-;;; and cleared by window-remove-pane.  The tests below verify the clear path
-;;; without requiring a real PTY.  The split/attach set path is verified by the
-;;; PTY-gated test below.
+  ;; window-name returns the name passed to make-window.
+  (it "window-name-slot-accessible"
+    (let ((win (make-window :id 1 :name "mywin")))
+      (expect (string= "mywin" (window-name win)))))
 
-(test window-remove-pane-clears-pane-window-sole-pane
-  "window-remove-pane on the sole pane sets pane-window to NIL."
-  (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
-         (win (make-window :id 1 :name "w" :width 80 :height 24
-                           :panes (list p0)
-                           :tree (make-layout-leaf p0))))
-    (setf (pane-window p0) win)
-    (window-remove-pane win p0)
-    (is (null (pane-window p0))
-        "pane-window of the sole removed pane must be NIL after removal")))
+  ;; ── window-width and window-height accessors ────────────────────────────────
 
-(test window-remove-pane-clears-pane-window-preserves-survivor
-  "window-remove-pane clears pane-window only for the removed pane."
-  (with-h-split-window (win p0 p1)
-    (setf (pane-window p0) win
-          (pane-window p1) win)
-    (window-remove-pane win p0)
-    (is (null (pane-window p0))
-        "pane-window of the removed pane must be NIL")
-    (is (eq win (pane-window p1))
-        "pane-window of the surviving pane must remain pointing to its window")))
+  ;; window-width and window-height return the geometry set at construction.
+  (it "window-width-height-slot-accessible"
+    (let ((win (make-window :id 1 :name "w" :width 120 :height 40)))
+      (expect (= 120 (window-width  win)))
+      (expect (= 40  (window-height win)))))
 
-(test window-split-sets-pane-window-back-pointer
-  "window-split wires pane-window on the new pane to the parent window."
-  (unless (pty-available-p)
-    (skip "no PTY available (sandboxed environment)"))
-  (with-session (session 24 80)
-    (let* ((win   (session-active-window session))
-           (p-new (window-split session win :h)))
-      (is (eq win (pane-window p-new))
-          "new pane's pane-window must point to its window after split"))))
+  ;; ── pane-window back-pointer wiring ──────────────────────────────────────────
+  ;;
+  ;; pane-window is set by window-split and %attach-full-screen-pane (production),
+  ;; and cleared by window-remove-pane.  The tests below verify the clear path
+  ;; without requiring a real PTY.  The split/attach set path is verified by the
+  ;; PTY-gated test below.
+
+  ;; window-remove-pane on the sole pane sets pane-window to NIL.
+  (it "window-remove-pane-clears-pane-window-sole-pane"
+    (let* ((p0  (make-no-pty-pane 1 0 0 80 24))
+           (win (make-window :id 1 :name "w" :width 80 :height 24
+                             :panes (list p0)
+                             :tree (make-layout-leaf p0))))
+      (setf (pane-window p0) win)
+      (window-remove-pane win p0)
+      (expect (null (pane-window p0)))))
+
+  ;; window-remove-pane clears pane-window only for the removed pane.
+  (it "window-remove-pane-clears-pane-window-preserves-survivor"
+    (with-h-split-window (win p0 p1)
+      (setf (pane-window p0) win
+            (pane-window p1) win)
+      (window-remove-pane win p0)
+      (expect (null (pane-window p0)))
+      (expect (eq win (pane-window p1)))))
+
+  ;; window-split wires pane-window on the new pane to the parent window.
+  (it "window-split-sets-pane-window-back-pointer"
+    (unless (pty-available-p)
+      (skip "no PTY available (sandboxed environment)"))
+    (with-session (session 24 80)
+      (let* ((win   (session-active-window session))
+             (p-new (window-split session win :h)))
+        (expect (eq win (pane-window p-new)))))))

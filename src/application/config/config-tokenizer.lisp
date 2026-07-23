@@ -116,19 +116,11 @@
 (defun %parse-control-char (rest)
   "Map REST (the part after a \"C-\" prefix) to its control CHARACTER, or NIL
    when REST does not denote a single control-able key.
-   C-a..C-z → ^A..^Z (1..26); C-Space / C-@ → NUL (0);
-   C-[ C-\\ C-] C-^ C-_ → 27..31.  The control byte is (logand code #x1f)."
-  (cond
-    ((string-equal rest "Space") (code-char 0))
-    ((= (length rest) 1)
-     (let ((c (char-upcase (char rest 0))))
-       (cond
-         ((char= c #\@) (code-char 0))
-         ((char<= #\A c #\Z) (code-char (logand (char-code c) +ctrl-mask+)))
-         ((member c '(#\[ #\\ #\] #\^ #\_) :test #'char=)
-          (code-char (logand (char-code c) +ctrl-mask+)))
-         (t nil))))
-    (t nil)))
+   Delegates the byte computation to %PREFIX-CONTROL-BYTE (config.lisp, which
+   loads before this file) rather than re-deriving it — the two used to
+   duplicate the same C-a..C-z/C-Space/C-[ \\ ] ^ _ mapping logic."
+  (let ((byte (%prefix-control-byte rest)))
+    (and byte (code-char byte))))
 
 (defun %canonicalize-multi-modifier-key (token)
   "When TOKEN is a chain of TWO OR MORE C-/M-/S- modifier prefixes (in any order

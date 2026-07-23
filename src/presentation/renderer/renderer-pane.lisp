@@ -10,18 +10,6 @@
 ;;; SBCL does not warn about an unknown special during compilation of this file.
 (declaim (special cl-tmux::*clock-mode-pane-id*))
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (let* ((source (or *load-truename* *compile-file-truename*))
-         (base (and source
-                    (make-pathname :name nil :type nil :defaults source))))
-    (dolist (name '("renderer-pane-selection.lisp"
-                    "renderer-pane-clock.lisp"
-                    "renderer-pane-copy-mode.lisp"
-                    "renderer-pane-search.lisp"))
-      (let ((path (and base (merge-pathnames name base))))
-        (when (and path (probe-file path))
-          (load path))))))
-
 ;;; ── Per-row cell rendering ───────────────────────────────────────────────────
 
 (defstruct (sgr-register (:conc-name sgr-reg-))

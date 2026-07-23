@@ -2,10 +2,6 @@
 
 ;;;; find-window and next/previous/last-window command behavior
 
-(in-suite commands-suite)
-
-;;; ── find-window (scriptable %cmd-find-window-arg) ────────────────────────────
-
 (defun %find-window-fixture ()
   "Session \"0\" with three named windows alpha/beta/gamma (alpha current).
    The beta window has title and content markers for find-window parity tests.
@@ -34,247 +30,231 @@
       (session-select-window sess wa)
       (values sess wa wb wg))))
 
-(test cmd-find-window-selects-matching-window
-  "find-window <pattern> selects the window whose name matches (case-insensitive)."
-  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
-    (declare (ignore wa wg))
-    (with-command-test-state (sess)
-      (cl-tmux::%cmd-find-window-arg sess '("BET"))
-      (is (eq wb (session-active-window sess))
-          "find-window BET must select the 'beta' window (case-insensitive)"))))
+(describe "commands-suite"
 
-(test cmd-find-window-supports-title-and-content-search
-  "find-window matches pane titles, screen titles, and visible content by default."
-  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
-    (declare (ignore wa wg))
-    (with-command-test-state (sess)
-      (cl-tmux::%cmd-find-window-arg sess '("pane title"))
-      (is (eq wb (session-active-window sess))
-          "default find-window must match the pane title")
+  ;;; ── find-window (scriptable %cmd-find-window-arg) ────────────────────────────
+
+  ;; find-window <pattern> selects the window whose name matches (case-insensitive).
+  (it "cmd-find-window-selects-matching-window"
+    (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+      (declare (ignore wa wg))
+      (with-command-test-state (sess)
+        (cl-tmux::%cmd-find-window-arg sess '("BET"))
+        (expect (eq wb (session-active-window sess))))))
+
+  ;; find-window matches pane titles, screen titles, and visible content by default.
+  (it "cmd-find-window-supports-title-and-content-search"
+    (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+      (declare (ignore wa wg))
+      (with-command-test-state (sess)
+        (cl-tmux::%cmd-find-window-arg sess '("pane title"))
+        (expect (eq wb (session-active-window sess)))
+        (session-select-window sess wa)
+        (cl-tmux::%cmd-find-window-arg sess '("screen title"))
+        (expect (eq wb (session-active-window sess)))
+        (session-select-window sess wa)
+        (cl-tmux::%cmd-find-window-arg sess '("content needle"))
+        (expect (eq wb (session-active-window sess))))))
+
+  ;; find-window accepts -i, -r, -T, and -C search-mode flags.
+  (it "cmd-find-window-honors-search-mode-flags"
+    (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+      (declare (ignore wa wg))
+      (with-command-test-state (sess)
+        (cl-tmux::%cmd-find-window-arg sess '("-i" "BETA"))
+        (expect (eq wb (session-active-window sess)))
+        (session-select-window sess wa)
+        (cl-tmux::%cmd-find-window-arg sess '("-r" "^g.*a$"))
+        (expect (eq wg (session-active-window sess)))
+        (session-select-window sess wa)
+        (cl-tmux::%cmd-find-window-arg sess '("-T" "screen title"))
+        (expect (eq wb (session-active-window sess)))
+        (session-select-window sess wa)
+        (cl-tmux::%cmd-find-window-arg sess '("-C" "content needle"))
+        (expect (eq wb (session-active-window sess))))))
+
+  ;; find-window -t scopes the search to the targeted session.
+  (it "cmd-find-window-targets-another-session"
+    (multiple-value-bind (cur cur-a cur-b cur-c) (%find-window-fixture)
+      (declare (ignore cur-b cur-c))
+      (multiple-value-bind (other other-a other-b other-c) (%find-window-fixture)
+        (declare (ignore other-a other-c))
+        (setf (session-name other) "other")
+        (session-select-window other other-b)
+        (let ((cl-tmux::*server-sessions* (list (cons "0" cur)
+                                                (cons "other" other)))
+              (cl-tmux::*dirty* nil))
+          (cl-tmux::%cmd-find-window-arg cur '("-t" "other" "beta"))
+          (expect (eq cur-a (session-active-window cur)))
+          (expect (eq other-b (session-active-window other)))))))
+
+  ;; find-window with no matching window leaves the active window unchanged.
+  (it "cmd-find-window-no-match-leaves-active"
+    (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+      (declare (ignore wb wg))
+      (cl-tmux::%cmd-find-window-arg sess '("zzz"))
+      (expect (eq wa (session-active-window sess)))))
+
+  ;; find-window rejects extra positional arguments.
+  (it "cmd-find-window-rejects-extra-positional-args"
+    (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+      (declare (ignore wb wg))
       (session-select-window sess wa)
-      (cl-tmux::%cmd-find-window-arg sess '("screen title"))
-      (is (eq wb (session-active-window sess))
-          "default find-window must match the screen title")
-      (session-select-window sess wa)
-      (cl-tmux::%cmd-find-window-arg sess '("content needle"))
-      (is (eq wb (session-active-window sess))
-          "default find-window must match visible content"))))
+      (with-command-rejection-state (sess
+                                     (cl-tmux::%cmd-find-window-arg sess '("ALP" "extra"))
+                                     "find-window: unsupported argument"
+                                     "find-window extra args")
+        (expect (eq wa (session-active-window sess)))
+        (assert-overlay-active
+         "rejected args must show an error overlay"))))
 
-(test cmd-find-window-honors-search-mode-flags
-  "find-window accepts -i, -r, -T, and -C search-mode flags."
-  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
-    (declare (ignore wa wg))
-    (with-command-test-state (sess)
-      (cl-tmux::%cmd-find-window-arg sess '("-i" "BETA"))
-      (is (eq wb (session-active-window sess))
-          "-i must be accepted and keep matching case-insensitively")
-      (session-select-window sess wa)
-      (cl-tmux::%cmd-find-window-arg sess '("-r" "^g.*a$"))
-      (is (eq wg (session-active-window sess))
-          "-r must enable regex matching")
-      (session-select-window sess wa)
-      (cl-tmux::%cmd-find-window-arg sess '("-T" "screen title"))
-      (is (eq wb (session-active-window sess))
-          "-T must restrict matching to titles")
-      (session-select-window sess wa)
-      (cl-tmux::%cmd-find-window-arg sess '("-C" "content needle"))
-      (is (eq wb (session-active-window sess))
-          "-C must restrict matching to visible content"))))
-
-(test cmd-find-window-targets-another-session
-  "find-window -t scopes the search to the targeted session."
-  (multiple-value-bind (cur cur-a cur-b cur-c) (%find-window-fixture)
-    (declare (ignore cur-b cur-c))
-    (multiple-value-bind (other other-a other-b other-c) (%find-window-fixture)
-      (declare (ignore other-a other-c))
-      (setf (session-name other) "other")
-      (session-select-window other other-b)
-      (let ((cl-tmux::*server-sessions* (list (cons "0" cur)
-                                              (cons "other" other)))
-            (cl-tmux::*dirty* nil))
-        (cl-tmux::%cmd-find-window-arg cur '("-t" "other" "beta"))
-        (is (eq cur-a (session-active-window cur))
-            "-t must not change the calling session")
-        (is (eq other-b (session-active-window other))
-            "-t must select the matching window in the target session")))))
-
-(test cmd-find-window-no-match-leaves-active
-  "find-window with no matching window leaves the active window unchanged."
-  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
-    (declare (ignore wb wg))
-    (cl-tmux::%cmd-find-window-arg sess '("zzz"))
-    (is (eq wa (session-active-window sess))
-        "no match must leave the original active window selected")))
-
-(test cmd-find-window-rejects-extra-positional-args
-  "find-window rejects extra positional arguments."
-  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
-    (declare (ignore wb wg))
-    (session-select-window sess wa)
-    (with-command-rejection-state (sess
-                                   (cl-tmux::%cmd-find-window-arg sess '("ALP" "extra"))
-                                   "find-window: unsupported argument"
-                                   "find-window extra args")
-      (is (eq wa (session-active-window sess))
-          "rejected args must not change the active window")
-      (assert-overlay-active
-       "rejected args must show an error overlay"))))
-
-(test cmd-find-window-rejects-zoom-flag
-  "find-window rejects the removed -Z zoom flag."
-  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
-    (declare (ignore wg))
-    (session-select-window sess wa)
-    (with-command-rejection-state (sess
-                                   (cl-tmux::%cmd-find-window-arg sess '("-Z" "beta"))
-                                   "find-window: unsupported argument"
-                                   "find-window -Z")
-      (is (eq wa (session-active-window sess))
-          "rejected -Z must not change the active window")
-      (is-false (cl-tmux/model:window-zoom-p wb)
-                "rejected -Z must not zoom the matching window")
-      (assert-overlay-active
-       "rejected -Z must show an error overlay"))))
-
-(test window-matches-pattern-p-name
-  "%window-matches-pattern-p matches the window name case-insensitively."
-  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
-    (declare (ignore sess wb wg))
-    (is-true  (cl-tmux::%window-matches-pattern-p wa "ALP") "case-insensitive name match")
-    (is-false (cl-tmux::%window-matches-pattern-p wa "beta") "non-matching name -> NIL")))
-
-;;; ── next-window / previous-window (scriptable -t) ────────────────────────────
-
-(test cmd-next-and-previous-window-table
-  "next-window advances to the next window; previous-window wraps to the last.
-   Both operate on the current session (no -t flag).
-   Each row: (direction expected-window-key description)."
-  (dolist (row '((:next     :wb "next-window advances alpha -> beta")
-                 (:previous :wg "previous-window from alpha wraps to gamma")))
-    (destructuring-bind (dir expected-key desc) row
-      (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
-        (declare (ignore wa))
-        (with-command-test-state (sess)
-          (ecase dir
-            (:next     (cl-tmux::%cmd-next-window-arg     sess '()))
-            (:previous (cl-tmux::%cmd-previous-window-arg sess '())))
-          (let ((expected (ecase expected-key (:wb wb) (:wg wg))))
-            (is (eq expected (session-active-window sess)) desc)))))))
-
-(test cmd-window-cycle-rejects-unsupported-arguments-before-cycling
-  "next-window/previous-window reject unsupported arguments before changing the
-   active window."
-  (dolist (case (list (list #'cl-tmux::%cmd-next-window-arg
-                            "next-window" '("-Z"))
-                      (list #'cl-tmux::%cmd-next-window-arg
-                            "next-window" '("extra"))
-                      (list #'cl-tmux::%cmd-previous-window-arg
-                            "previous-window" '("-Z"))
-                      (list #'cl-tmux::%cmd-previous-window-arg
-                            "previous-window" '("extra"))))
-    (destructuring-bind (command command-name args) case
-      (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
-        (declare (ignore wb wg))
-        (with-command-rejection-state (sess
-                                       (funcall command sess args)
-                                       (format nil "~A: unsupported argument" command-name)
-                                       (format nil "~A rejects ~S" command-name args))
-          (is (eq wa (session-active-window sess))
-              "~A leaves the active window unchanged for ~S" command-name args))))))
-
-(test cmd-last-window-selects-previously-active-window
-  "last-window selects the most recently active non-current window."
-  (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
-    (declare (ignore wg))
-    (with-command-test-state (sess)
-      (session-select-window sess wb)
-      (setf (cl-tmux/model:window-last-active-time wb) 40
-            (cl-tmux/model:window-last-active-time wa) 30)
-      (cl-tmux::%cmd-last-window-arg sess '())
-      (is (eq wa (session-active-window sess))
-          "last-window switches to the previous window")
-      (is-true cl-tmux::*dirty*
-               "last-window marks the display dirty"))))
-
-(test cmd-last-window-rejects-unsupported-arguments-before-switching
-  "last-window rejects unsupported arguments before changing the active window."
-  (dolist (args '(("-Z") ("extra")))
+  ;; find-window rejects the removed -Z zoom flag.
+  (it "cmd-find-window-rejects-zoom-flag"
     (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
       (declare (ignore wg))
-      (session-select-window sess wb)
-      (setf (cl-tmux/model:window-last-active-time wb) 40
-            (cl-tmux/model:window-last-active-time wa) 30)
+      (session-select-window sess wa)
       (with-command-rejection-state (sess
-                                     (cl-tmux::%cmd-last-window-arg sess args)
-                                     "last-window: unsupported argument"
-                                     (format nil "last-window rejects ~S" args))
-        (is (eq wb (session-active-window sess))
-            "last-window leaves the active window unchanged for ~S" args)))))
+                                     (cl-tmux::%cmd-find-window-arg sess '("-Z" "beta"))
+                                     "find-window: unsupported argument"
+                                     "find-window -Z")
+        (expect (eq wa (session-active-window sess)))
+        (expect (cl-tmux/model:window-zoom-p wb) :to-be-falsy)
+        (assert-overlay-active
+         "rejected -Z must show an error overlay"))))
 
-(test cmd-next-window-t-targets-named-session
-  "next-window -t NAME advances the NAMED session's window, leaving the current
-   session's active window unchanged."
-  (let* ((pc (%make-test-pane :id 1)) (poa (%make-test-pane :id 2))
-         (pob (%make-test-pane :id 3))
-         (cur-win (make-window :id 1 :name "cur" :width 20 :height 5
-                               :tree (make-layout-leaf pc) :panes (list pc)))
-         (cur     (make-session :id 1 :name "cur" :windows (list cur-win)))
-         (o-a (make-window :id 2 :name "oa" :width 20 :height 5
-                           :tree (make-layout-leaf poa) :panes (list poa)))
-         (o-b (make-window :id 3 :name "ob" :width 20 :height 5
-                           :tree (make-layout-leaf pob) :panes (list pob)))
-         (other (make-session :id 2 :name "other" :windows (list o-a o-b))))
-    (session-select-window cur cur-win)
-    (session-select-window other o-a)
-    (let ((cl-tmux::*server-sessions* (list (cons "cur" cur) (cons "other" other)))
-          (cl-tmux::*dirty* nil))
-      (cl-tmux::%cmd-next-window-arg cur '("-t" "other"))
-      (is (eq o-b (session-active-window other))
-          "next-window -t other advanced the OTHER session to its second window")
-      (is (eq cur-win (session-active-window cur))
-          "the current session's active window stays unchanged"))))
+  ;; %window-matches-pattern-p matches the window name case-insensitively.
+  (it "window-matches-pattern-p-name"
+    (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+      (declare (ignore sess wb wg))
+      (expect (cl-tmux::%window-matches-pattern-p wa "ALP") :to-be-truthy)
+      (expect (cl-tmux::%window-matches-pattern-p wa "beta") :to-be-falsy)))
 
-(test cmd-last-window-t-targets-named-session
-  "last-window -t NAME selects the NAMED session's previous window, leaving the
-   current session's active window unchanged."
-  (let* ((pc (%make-test-pane :id 1)) (poa (%make-test-pane :id 2))
-         (pob (%make-test-pane :id 3))
-         (cur-win (make-window :id 1 :name "cur" :width 20 :height 5
-                               :tree (make-layout-leaf pc) :panes (list pc)))
-         (cur     (make-session :id 1 :name "cur" :windows (list cur-win)))
-         (o-a (make-window :id 2 :name "oa" :width 20 :height 5
-                           :tree (make-layout-leaf poa) :panes (list poa)))
-         (o-b (make-window :id 3 :name "ob" :width 20 :height 5
-                           :tree (make-layout-leaf pob) :panes (list pob)))
-         (other (make-session :id 2 :name "other" :windows (list o-a o-b))))
-    (session-select-window cur cur-win)
-    (session-select-window other o-b)
-    (setf (cl-tmux/model:window-last-active-time o-b) 40
-          (cl-tmux/model:window-last-active-time o-a) 30)
-    (let ((cl-tmux::*server-sessions* (list (cons "cur" cur) (cons "other" other)))
-          (cl-tmux::*dirty* nil))
-      (cl-tmux::%cmd-last-window-arg cur '("-t" "other"))
-      (is (eq o-a (session-active-window other))
-          "last-window -t other selects the OTHER session's previous window")
-      (is (eq cur-win (session-active-window cur))
-          "the current session's active window stays unchanged"))))
+  ;;; ── next-window / previous-window (scriptable -t) ────────────────────────────
 
-(test cmd-next-previous-window-a-table
-  "next/previous-window -a jump to the nearest alerted window; no alerts -> no-op.
-   Fixture order: alpha(active) beta gamma.
-   Each row: (dir flag-kw expected-key description)."
-  (dolist (row '((:next     :activity :wg "next-window -a skips beta (no alert) and selects gamma")
-                 (:next     :none     :wa "next-window -a with no alerts stays on the active window")
-                 (:previous :silence  :wb "previous-window -a selects beta (the alerted window)")))
-    (destructuring-bind (dir flag-kw expected-key desc) row
+  ;; next-window advances to the next window; previous-window wraps to the last.
+  ;; Both operate on the current session (no -t flag).
+  ;; Each row: (direction expected-window-key description).
+  (it "cmd-next-and-previous-window-table"
+    (dolist (row '((:next     :wb "next-window advances alpha -> beta")
+                   (:previous :wg "previous-window from alpha wraps to gamma")))
+      (destructuring-bind (dir expected-key desc) row
+        (declare (ignore desc))
+        (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+          (declare (ignore wa))
+          (with-command-test-state (sess)
+            (ecase dir
+              (:next     (cl-tmux::%cmd-next-window-arg     sess '()))
+              (:previous (cl-tmux::%cmd-previous-window-arg sess '())))
+            (let ((expected (ecase expected-key (:wb wb) (:wg wg))))
+              (expect (eq expected (session-active-window sess)))))))))
+
+  ;; next-window/previous-window reject unsupported arguments before changing the
+  ;; active window.
+  (it "cmd-window-cycle-rejects-unsupported-arguments-before-cycling"
+    (dolist (case (list (list #'cl-tmux::%cmd-next-window-arg
+                              "next-window" '("-Z"))
+                        (list #'cl-tmux::%cmd-next-window-arg
+                              "next-window" '("extra"))
+                        (list #'cl-tmux::%cmd-previous-window-arg
+                              "previous-window" '("-Z"))
+                        (list #'cl-tmux::%cmd-previous-window-arg
+                              "previous-window" '("extra"))))
+      (destructuring-bind (command command-name args) case
+        (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+          (declare (ignore wb wg))
+          (with-command-rejection-state (sess
+                                         (funcall command sess args)
+                                         (format nil "~A: unsupported argument" command-name)
+                                         (format nil "~A rejects ~S" command-name args))
+            (expect (eq wa (session-active-window sess))))))))
+
+  ;; last-window selects the most recently active non-current window.
+  (it "cmd-last-window-selects-previously-active-window"
+    (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+      (declare (ignore wg))
+      (with-command-test-state (sess)
+        (session-select-window sess wb)
+        (setf (cl-tmux/model:window-last-active-time wb) 40
+              (cl-tmux/model:window-last-active-time wa) 30)
+        (cl-tmux::%cmd-last-window-arg sess '())
+        (expect (eq wa (session-active-window sess)))
+        (expect cl-tmux::*dirty* :to-be-truthy))))
+
+  ;; last-window rejects unsupported arguments before changing the active window.
+  (it "cmd-last-window-rejects-unsupported-arguments-before-switching"
+    (dolist (args '(("-Z") ("extra")))
       (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
-        (with-command-test-state (sess)
-          (ecase flag-kw
-            (:activity (setf (cl-tmux/model:window-activity-flag wg) t))
-            (:silence  (setf (cl-tmux/model:window-silence-flag  wb) t))
-            (:none     nil))
-          (ecase dir
-            (:next     (cl-tmux::%cmd-next-window-arg     sess '("-a")))
-            (:previous (cl-tmux::%cmd-previous-window-arg sess '("-a"))))
-          (let ((expected (ecase expected-key (:wa wa) (:wb wb) (:wg wg))))
-            (is (eq expected (session-active-window sess)) desc)))))))
+        (declare (ignore wg))
+        (session-select-window sess wb)
+        (setf (cl-tmux/model:window-last-active-time wb) 40
+              (cl-tmux/model:window-last-active-time wa) 30)
+        (with-command-rejection-state (sess
+                                       (cl-tmux::%cmd-last-window-arg sess args)
+                                       "last-window: unsupported argument"
+                                       (format nil "last-window rejects ~S" args))
+          (expect (eq wb (session-active-window sess)))))))
+
+  ;; next-window -t NAME advances the NAMED session's window, leaving the current
+  ;; session's active window unchanged.
+  (it "cmd-next-window-t-targets-named-session"
+    (let* ((pc (%make-test-pane :id 1)) (poa (%make-test-pane :id 2))
+           (pob (%make-test-pane :id 3))
+           (cur-win (make-window :id 1 :name "cur" :width 20 :height 5
+                                 :tree (make-layout-leaf pc) :panes (list pc)))
+           (cur     (make-session :id 1 :name "cur" :windows (list cur-win)))
+           (o-a (make-window :id 2 :name "oa" :width 20 :height 5
+                             :tree (make-layout-leaf poa) :panes (list poa)))
+           (o-b (make-window :id 3 :name "ob" :width 20 :height 5
+                             :tree (make-layout-leaf pob) :panes (list pob)))
+           (other (make-session :id 2 :name "other" :windows (list o-a o-b))))
+      (session-select-window cur cur-win)
+      (session-select-window other o-a)
+      (let ((cl-tmux::*server-sessions* (list (cons "cur" cur) (cons "other" other)))
+            (cl-tmux::*dirty* nil))
+        (cl-tmux::%cmd-next-window-arg cur '("-t" "other"))
+        (expect (eq o-b (session-active-window other)))
+        (expect (eq cur-win (session-active-window cur))))))
+
+  ;; last-window -t NAME selects the NAMED session's previous window, leaving the
+  ;; current session's active window unchanged.
+  (it "cmd-last-window-t-targets-named-session"
+    (let* ((pc (%make-test-pane :id 1)) (poa (%make-test-pane :id 2))
+           (pob (%make-test-pane :id 3))
+           (cur-win (make-window :id 1 :name "cur" :width 20 :height 5
+                                 :tree (make-layout-leaf pc) :panes (list pc)))
+           (cur     (make-session :id 1 :name "cur" :windows (list cur-win)))
+           (o-a (make-window :id 2 :name "oa" :width 20 :height 5
+                             :tree (make-layout-leaf poa) :panes (list poa)))
+           (o-b (make-window :id 3 :name "ob" :width 20 :height 5
+                             :tree (make-layout-leaf pob) :panes (list pob)))
+           (other (make-session :id 2 :name "other" :windows (list o-a o-b))))
+      (session-select-window cur cur-win)
+      (session-select-window other o-b)
+      (setf (cl-tmux/model:window-last-active-time o-b) 40
+            (cl-tmux/model:window-last-active-time o-a) 30)
+      (let ((cl-tmux::*server-sessions* (list (cons "cur" cur) (cons "other" other)))
+            (cl-tmux::*dirty* nil))
+        (cl-tmux::%cmd-last-window-arg cur '("-t" "other"))
+        (expect (eq o-a (session-active-window other)))
+        (expect (eq cur-win (session-active-window cur))))))
+
+  ;; next/previous-window -a jump to the nearest alerted window; no alerts -> no-op.
+  ;; Fixture order: alpha(active) beta gamma.
+  ;; Each row: (dir flag-kw expected-key description).
+  (it "cmd-next-previous-window-a-table"
+    (dolist (row '((:next     :activity :wg "next-window -a skips beta (no alert) and selects gamma")
+                   (:next     :none     :wa "next-window -a with no alerts stays on the active window")
+                   (:previous :silence  :wb "previous-window -a selects beta (the alerted window)")))
+      (destructuring-bind (dir flag-kw expected-key desc) row
+        (declare (ignore desc))
+        (multiple-value-bind (sess wa wb wg) (%find-window-fixture)
+          (with-command-test-state (sess)
+            (ecase flag-kw
+              (:activity (setf (cl-tmux/model:window-activity-flag wg) t))
+              (:silence  (setf (cl-tmux/model:window-silence-flag  wb) t))
+              (:none     nil))
+            (ecase dir
+              (:next     (cl-tmux::%cmd-next-window-arg     sess '("-a")))
+              (:previous (cl-tmux::%cmd-previous-window-arg sess '("-a"))))
+            (let ((expected (ecase expected-key (:wa wa) (:wb wb) (:wg wg))))
+              (expect (eq expected (session-active-window sess))))))))))

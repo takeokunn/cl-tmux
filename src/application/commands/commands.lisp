@@ -211,17 +211,18 @@
       ;; fixtures can carry stale pane dimensions even when the window/tree size
       ;; is current, and `-l` must be computed from the rendered pane extent.
       (cl-tmux/model:window-relayout-current dst-window)
-      (multiple-value-bind (active tree active-leaf) (%join-pane-active-leaf dst-window)
+      (multiple-value-bind (refreshed-active refreshed-tree refreshed-active-leaf)
+          (%join-pane-active-leaf dst-window)
         ;; Match split-window's layout rules: -f uses the full window extent,
         ;; -b swaps the child order, and -l supplies the target size hint.
-        (multiple-value-bind (px py pw ph) (split-child-geometry active direction)
+        (multiple-value-bind (px py pw ph) (split-child-geometry refreshed-active direction)
           (pane-reposition src-pane px py pw ph)
           (let ((new-split (%join-pane-build-split-node
-                             src-pane dst-window active tree active-leaf
-                             direction before full size)))
+                             src-pane dst-window refreshed-active refreshed-tree
+                             refreshed-active-leaf direction before full size)))
             (if full
                 (setf (window-tree dst-window) new-split)
-                (cl-tmux/model::%replace-in-tree dst-window active-leaf new-split))
+                (cl-tmux/model::%replace-in-tree dst-window refreshed-active-leaf new-split))
             (setf (window-panes dst-window) (layout-leaves (window-tree dst-window))
                   (pane-window src-pane) dst-window)
             (window-relayout dst-window (window-height dst-window) (window-width dst-window))

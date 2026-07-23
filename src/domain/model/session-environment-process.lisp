@@ -25,8 +25,10 @@
   (%assert-environment-variable-name name)
   (ignore-errors (sb-ext:posix-getenv name)))
 
-(defun %process-environment-entry-name (entry)
-  "Return the NAME portion of a process environment ENTRY string."
+(defun %environment-entry-name (entry)
+  "Return the NAME component of a NAME=VALUE environment ENTRY string, or NIL.
+   Shared with session-environment-overlay.lisp (loaded after this file),
+   which also defines the matching %ENVIRONMENT-ENTRY-VALUE."
   (let ((eq-pos (position #\= entry)))
     (when eq-pos
       (subseq entry 0 eq-pos))))
@@ -35,7 +37,7 @@
   "Return sorted names from the live process environment."
   (let (names)
     (dolist (entry (ignore-errors (sb-ext:posix-environ)))
-      (let ((name (%process-environment-entry-name entry)))
+      (let ((name (%environment-entry-name entry)))
         (when name
           (pushnew name names :test #'string=))))
     (sort names #'string<)))
@@ -46,13 +48,6 @@
   (loop for name in *update-environment*
         for value = (ignore-errors (sb-ext:posix-getenv name))
         when value collect (cons name value)))
-
-(defun %process-posix-fn (name)
-  "Look up the symbol named NAME in SB-POSIX lazily.
-   Returns the symbol (callable as a function) when SB-POSIX is available,
-   or NIL when the package has not been loaded yet."
-  (let ((pkg (find-package "SB-POSIX")))
-    (and pkg (find-symbol name pkg))))
 
 ;;; ── %with-posix-env-op — shared skeleton for set/unset ──────────────────────
 ;;;
@@ -66,7 +61,7 @@
    Expands to a progn so callers can append their own return form."
   `(progn
      (%assert-environment-variable-name ,name)
-     (let ((%posix-fn (%process-posix-fn ,posix-fn-name)))
+     (let ((%posix-fn (find-posix-function ,posix-fn-name)))
        (when %posix-fn
          (ignore-errors (funcall %posix-fn ,@call-args))))))
 

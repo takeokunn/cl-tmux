@@ -62,11 +62,16 @@
          (unless (%copy-mode-active-p session)
            (%forward-octets-synchronized session (subseq buffer 0 length))))))))
 
-(defun %escape-ss3-introducer-p (buffer length)
+(defun %csi-ss3-introducer-p (buffer length)
+  "T for the 2-byte SS3 introducer ESC O, still awaiting its final byte.
+   Shared by the escape-mode and post-prefix CSI/SS3 continuations — both
+   decode the identical ESC O <final> shape, just dispatching to a different
+   key table afterward."
   (and (= length 2)
        (= (aref buffer 1) +byte-ss3-o+)))
 
-(defun %escape-ss3-complete-p (buffer length)
+(defun %csi-ss3-complete-p (buffer length)
+  "T for a complete 3-byte SS3 sequence ESC O <final>."
   (and (= length 3)
        (= (aref buffer 1) +byte-ss3-o+)))
 
@@ -93,20 +98,23 @@
        (/= (aref buffer 2) +byte-ascii-m+)
        (/= (aref buffer 2) +byte-sgr-lt+)))
 
-(defun %escape-csi-tilde-p (buffer length)
+(defun %csi-tilde-key-p (buffer length)
+  "T for a complete function/navigation key ESC [ <digits> ~."
   (and (>= length 4)
        (= (aref buffer 1) +byte-csi-bracket+)
        (<= +byte-digit-0+ (aref buffer 2) +byte-digit-9+)
        (= (aref buffer (1- length)) +byte-tilde+)))
 
-(defun %escape-modifier-arrow-accumulating-p (buffer length)
+(defun %csi-modifier-arrow-accumulating-p (buffer length)
+  "T while accumulating ESC [ 1 ; [MOD] toward a 6-byte modifier sequence."
   (and (>= length 4)
        (<= length 5)
        (= (aref buffer 1) +byte-csi-bracket+)
        (= (aref buffer 2) +byte-csi-param-1+)
        (= (aref buffer 3) +byte-csi-semi+)))
 
-(defun %escape-modifier-arrow-complete-p (buffer length)
+(defun %csi-modifier-arrow-complete-p (buffer length)
+  "T for a complete 6-byte modifier CSI sequence ESC [ 1 ; MOD FINAL."
   (and (= length 6)
        (= (aref buffer 1) +byte-csi-bracket+)
        (= (aref buffer 2) +byte-csi-param-1+)
@@ -132,7 +140,8 @@
        (= (aref buffer 1) +byte-csi-bracket+)
        (/= (aref buffer 3) +byte-tilde+)))
 
-(defun %escape-two-byte-non-csi-p (buffer length)
+(defun %csi-two-byte-non-csi-p (buffer length)
+  "T for a 2-byte non-CSI sequence ESC <key> (a bare meta/alt chord)."
   (and (= length 2)
        (/= (aref buffer 1) +byte-csi-bracket+)))
 
@@ -180,8 +189,8 @@
 
 (defun %escape-input-dispatch-key (buffer length)
   (cond
-    ((%escape-ss3-introducer-p buffer length) :ss3-introducer)
-    ((%escape-ss3-complete-p buffer length) :ss3-complete)
+    ((%csi-ss3-introducer-p buffer length) :ss3-introducer)
+    ((%csi-ss3-complete-p buffer length) :ss3-complete)
     ((%escape-x10-mouse-complete-p buffer length) :x10-mouse-complete)
     ((%escape-x10-mouse-accumulating-p buffer length) :x10-mouse-accumulating)
     ((and (%sgr-mouse-sequence-p buffer length)
@@ -192,17 +201,17 @@
     ((%csi-u-accumulating-p buffer length) :csi-u-accumulating)
     ((%escape-focus-change-p buffer length) :focus-change)
     ((%escape-csi-3byte-p buffer length) :csi-3byte)
-    ((%escape-csi-tilde-p buffer length) :csi-tilde)
-    ((%escape-modifier-arrow-accumulating-p buffer length)
+    ((%csi-tilde-key-p buffer length) :csi-tilde)
+    ((%csi-modifier-arrow-accumulating-p buffer length)
      :modifier-arrow-accumulating)
-    ((%escape-modifier-arrow-complete-p buffer length)
+    ((%csi-modifier-arrow-complete-p buffer length)
      :modifier-arrow-complete)
     ((%escape-digit-leading-csi-accumulating-p buffer length)
      :digit-leading-csi-accumulating)
     ((%escape-digit-leading-csi-complete-p buffer length)
      :digit-leading-csi-complete)
     ((%escape-4byte-accumulating-p buffer length) :four-byte-accumulating)
-    ((%escape-two-byte-non-csi-p buffer length) :two-byte-non-csi)
+    ((%csi-two-byte-non-csi-p buffer length) :two-byte-non-csi)
     ((%escape-overflow-p length) :overflow)
     (t :continue)))
 

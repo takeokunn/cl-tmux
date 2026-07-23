@@ -3,275 +3,249 @@
 ;;;; Options tests — part C: type-coercion dispatch, option-table macro,
 ;;;; spec accessors, server options, show-option sorting, status defaults.
 
-(in-suite options-suite)
+(describe "options-suite"
 
-;;; ── define-type-coercions ecase dispatch ─────────────────────────────────
+  ;;; ── define-type-coercions ecase dispatch ─────────────────────────────────
 
-(test type-coercions-boolean-table
-  "%coerce-value :boolean coerces strings, integers, and non-string values correctly."
-  (dolist (c '(("on"    t   "on → T")
-               ("true"  t   "true → T")
-               ("1"     t   "1 → T")
-               ("off"   nil "off → NIL")
-               ("false" nil "false → NIL")
-               ("0"     nil "0 → NIL")
-               (42      t   "42 → T")
-               (nil     nil "nil → NIL")))
-    (destructuring-bind (input expected desc) c
-      (is (eq expected (cl-tmux/options::%coerce-value :boolean input)) "~A" desc))))
+  ;; %coerce-value :boolean coerces strings, integers, and non-string values correctly.
+  (it "type-coercions-boolean-table"
+    (dolist (c '(("on"    t   "on → T")
+                 ("true"  t   "true → T")
+                 ("1"     t   "1 → T")
+                 ("off"   nil "off → NIL")
+                 ("false" nil "false → NIL")
+                 ("0"     nil "0 → NIL")
+                 (42      t   "42 → T")
+                 (nil     nil "nil → NIL")))
+      (destructuring-bind (input expected desc) c
+        (declare (ignore desc))
+        (expect (eq expected (cl-tmux/options::%coerce-value :boolean input))))))
 
-(test type-coercions-integer-table
-  "%coerce-value :integer parses strings and truncates floats; nil/garbage → 0."
-  (dolist (c '(("42"           42 "numeric string → 42")
-               ("not-a-number" 0  "non-numeric string → 0")
-               (3.7            3  "float → truncated to 3")
-               (nil            0  "nil → 0")))
-    (destructuring-bind (input expected desc) c
-      (is (= expected (cl-tmux/options::%coerce-value :integer input)) "~A" desc))))
+  ;; %coerce-value :integer parses strings and truncates floats; nil/garbage → 0.
+  (it "type-coercions-integer-table"
+    (dolist (c '(("42"           42 "numeric string → 42")
+                 ("not-a-number" 0  "non-numeric string → 0")
+                 (3.7            3  "float → truncated to 3")
+                 (nil            0  "nil → 0")))
+      (destructuring-bind (input expected desc) c
+        (declare (ignore desc))
+        (expect (= expected (cl-tmux/options::%coerce-value :integer input))))))
 
-(test type-coercions-string
-  "%coerce-value :string formats any value as a string."
-  (dolist (c '((42      "42"    "integer -> decimal string")
-               (t       "T"     "T -> \"T\"")
-               ("hello" "hello" "string passes through unchanged")))
-    (destructuring-bind (input expected desc) c
-      (is (string= expected (cl-tmux/options::%coerce-value :string input)) "~A" desc))))
+  ;; %coerce-value :string formats any value as a string.
+  (it "type-coercions-string"
+    (dolist (c '((42      "42"    "integer -> decimal string")
+                 (t       "T"     "T -> \"T\"")
+                 ("hello" "hello" "string passes through unchanged")))
+      (destructuring-bind (input expected desc) c
+        (declare (ignore desc))
+        (expect (string= expected (cl-tmux/options::%coerce-value :string input))))))
 
-;;; ── set-option unregistered-option passthrough path ──────────────────────
+  ;;; ── set-option unregistered-option passthrough path ──────────────────────
 
-(test set-option-unregistered-stores-as-is-table
-  "set-option stores unregistered values without coercion for any value type."
-  (dolist (c '(("custom-unknown-option" "raw-value" "string stored as-is")
-               ("custom-int-option"     99          "integer stored as-is")))
-    (destructuring-bind (name value desc) c
-      (with-fresh-options
-        (cl-tmux/options:set-option name value)
-        (is (equal value (cl-tmux/options:get-option name)) "~A" desc)))))
+  ;; set-option stores unregistered values without coercion for any value type.
+  (it "set-option-unregistered-stores-as-is-table"
+    (dolist (c '(("custom-unknown-option" "raw-value" "string stored as-is")
+                 ("custom-int-option"     99          "integer stored as-is")))
+      (destructuring-bind (name value desc) c
+        (declare (ignore desc))
+        (with-fresh-options
+          (cl-tmux/options:set-option name value)
+          (expect (equal value (cl-tmux/options:get-option name)))))))
 
-;;; ── all-options count matches registration ────────────────────────────────
+  ;;; ── all-options count matches registration ────────────────────────────────
 
-(test all-options-count-matches-registry
-  "all-options returns an entry for every option in *option-registry*."
-  (let* ((registry-count (hash-table-count cl-tmux/options:*option-registry*))
-         (all            (cl-tmux/options:all-options)))
-    (is (= registry-count (length all))
-        "all-options count (~D) must match *option-registry* count (~D)"
-        (length all) registry-count)))
+  ;; all-options returns an entry for every option in *option-registry*.
+  (it "all-options-count-matches-registry"
+    (let* ((registry-count (hash-table-count cl-tmux/options:*option-registry*))
+           (all            (cl-tmux/options:all-options)))
+      (expect (= registry-count (length all)))))
 
-;;; ── define-option-table macro ─────────────────────────────────────────────
+  ;;; ── define-option-table macro ─────────────────────────────────────────────
 
-(test define-option-table-macro-is-defined
-  "define-option-table is a registered macro."
-  (is (macro-function 'cl-tmux/options:define-option-table)))
+  ;; define-option-table is a registered macro.
+  (it "define-option-table-macro-is-defined"
+    (expect (macro-function 'cl-tmux/options:define-option-table)))
 
-;;; ── option-spec accessors ─────────────────────────────────────────────────
+  ;;; ── option-spec accessors ─────────────────────────────────────────────────
 
-(test option-spec-accessors
-  "option-spec-name, option-spec-type, option-spec-default return the correct fields."
-  (let ((spec (gethash "status" cl-tmux/options:*option-registry*)))
-    (is (not (null spec))
-        "status must be a registered option")
-    (is (string= "status" (cl-tmux/options:option-spec-name spec))
-        "option-spec-name must return \"status\"")
-    (is (eq :string (cl-tmux/options:option-spec-type spec))
-        "option-spec-type for status must be :string (choice off|on|2..5)")
-    (is (string= "on" (cl-tmux/options:option-spec-default spec))
-        "option-spec-default for status must be \"on\"")))
+  ;; option-spec-name, option-spec-type, option-spec-default return the correct fields.
+  (it "option-spec-accessors"
+    (let ((spec (gethash "status" cl-tmux/options:*option-registry*)))
+      (expect (not (null spec)))
+      (expect (string= "status" (cl-tmux/options:option-spec-name spec)))
+      (expect (eq :string (cl-tmux/options:option-spec-type spec)))
+      (expect (string= "on" (cl-tmux/options:option-spec-default spec)))))
 
-(test option-spec-integer-type
-  "option-spec-type for an integer option is :integer."
-  (let ((spec (gethash "history-limit" cl-tmux/options:*option-registry*)))
-    (is (not (null spec))
-        "history-limit must be a registered option")
-    (is (eq :integer (cl-tmux/options:option-spec-type spec))
-        "option-spec-type for history-limit must be :integer")))
+  ;; option-spec-type for an integer option is :integer.
+  (it "option-spec-integer-type"
+    (let ((spec (gethash "history-limit" cl-tmux/options:*option-registry*)))
+      (expect (not (null spec)))
+      (expect (eq :integer (cl-tmux/options:option-spec-type spec)))))
 
-(test option-spec-string-type
-  "option-spec-type for a string option is :string."
-  (let ((spec (gethash "default-command" cl-tmux/options:*option-registry*)))
-    (is (not (null spec))
-        "default-command must be a registered option")
-    (is (eq :string (cl-tmux/options:option-spec-type spec))
-        "option-spec-type for default-command must be :string")))
+  ;; option-spec-type for a string option is :string.
+  (it "option-spec-string-type"
+    (let ((spec (gethash "default-command" cl-tmux/options:*option-registry*)))
+      (expect (not (null spec)))
+      (expect (eq :string (cl-tmux/options:option-spec-type spec)))))
 
-;;; ── get-server-option with default ───────────────────────────────────────
+  ;;; ── get-server-option with default ───────────────────────────────────────
 
-(test get-server-option-returns-default-when-absent
-  "get-server-option returns the supplied default when the key is absent."
-  (with-fresh-server-options
-    (is (= 99 (cl-tmux/options:get-server-option "nonexistent-server-opt" 99))
-        "get-server-option must return the default for an absent key")))
+  ;; get-server-option returns the supplied default when the key is absent.
+  (it "get-server-option-returns-default-when-absent"
+    (with-fresh-server-options
+      (expect (= 99 (cl-tmux/options:get-server-option "nonexistent-server-opt" 99)))))
 
-(test get-server-option-returns-nil-when-absent-no-default
-  "get-server-option returns NIL for an absent key when no default is given."
-  (with-fresh-server-options
-    (is (null (cl-tmux/options:get-server-option "nonexistent-server-opt"))
-        "get-server-option must return NIL when absent and no default supplied")))
+  ;; get-server-option returns NIL for an absent key when no default is given.
+  (it "get-server-option-returns-nil-when-absent-no-default"
+    (with-fresh-server-options
+      (expect (null (cl-tmux/options:get-server-option "nonexistent-server-opt")))))
 
-;;; ── set-server-option for unknown option (passthrough) ───────────────────
+  ;;; ── set-server-option for unknown option (passthrough) ───────────────────
 
-(test set-server-option-unknown-stores-as-is
-  "set-server-option for an unregistered option stores the value without coercion."
-  (with-fresh-server-options
-    (cl-tmux/options:set-server-option "custom-server-opt" "raw-value")
-    (is (string= "raw-value"
-                 (cl-tmux/options:get-server-option "custom-server-opt"))
-        "unregistered server option must be stored as-is")))
+  ;; set-server-option for an unregistered option stores the value without coercion.
+  (it "set-server-option-unknown-stores-as-is"
+    (with-fresh-server-options
+      (cl-tmux/options:set-server-option "custom-server-opt" "raw-value")
+      (expect (string= "raw-value"
+                       (cl-tmux/options:get-server-option "custom-server-opt")))))
 
-;;; ── show-option with :server scope ──────────────────────────────────────
+  ;;; ── show-option with :server scope ──────────────────────────────────────
 
-(test show-option-server-scope
-  "show-option with :server scope returns the value from *server-options*."
-  (with-single-server-option ("escape-time" 250)
-    (let ((out (cl-tmux/options:show-option "escape-time" :server)))
-      (is (search "escape-time" out)
-          "show-option :server must include option name (got ~S)" out)
-      (is (search "250" out)
-          "show-option :server must include the value 250 (got ~S)" out))))
+  ;; show-option with :server scope returns the value from *server-options*.
+  (it "show-option-server-scope"
+    (with-single-server-option ("escape-time" 250)
+      (let ((out (cl-tmux/options:show-option "escape-time" :server)))
+        (expect (search "escape-time" out))
+        (expect (search "250" out)))))
 
-;;; ── show-options returns sorted output ───────────────────────────────────
+  ;;; ── show-options returns sorted output ───────────────────────────────────
 
-(test show-options-is-sorted
-  "show-options output has options in alphabetical order."
-  (let ((cl-tmux/options:*global-options*
-         (let ((ht (make-hash-table :test #'equal)))
-           (setf (gethash "zebra-option" ht) "z")
-           (setf (gethash "alpha-option" ht) "a")
-           ht)))
-    (let ((out (cl-tmux/options:show-options)))
-      (let ((pos-alpha (search "alpha-option" out))
-            (pos-zebra (search "zebra-option" out)))
-        (is (and pos-alpha pos-zebra)
-            "both options must appear in show-options output")
-        (is (< pos-alpha pos-zebra)
-            "alpha-option must appear before zebra-option (sorted output)")))))
+  ;; show-options output has options in alphabetical order.
+  (it "show-options-is-sorted"
+    (let ((cl-tmux/options:*global-options*
+           (let ((ht (make-hash-table :test #'equal)))
+             (setf (gethash "zebra-option" ht) "z")
+             (setf (gethash "alpha-option" ht) "a")
+             ht)))
+      (let ((out (cl-tmux/options:show-options)))
+        (let ((pos-alpha (search "alpha-option" out))
+              (pos-zebra (search "zebra-option" out)))
+          (expect (and pos-alpha pos-zebra))
+          (expect (< pos-alpha pos-zebra))))))
 
-;;; ── define-server-options macro ──────────────────────────────────────────
+  ;;; ── define-server-options macro ──────────────────────────────────────────
 
-(test define-server-options-macro-is-defined
-  "define-server-options is a registered macro."
-  (is (macro-function 'cl-tmux/options:define-server-options)))
+  ;; define-server-options is a registered macro.
+  (it "define-server-options-macro-is-defined"
+    (expect (macro-function 'cl-tmux/options:define-server-options)))
 
-;;; ── option defaults table ────────────────────────────────────────────────
+  ;;; ── option defaults table ────────────────────────────────────────────────
 
-(test option-defaults-table
-  "Key global options return the expected default values from *option-registry*."
-  (dolist (c '(("status-position"   "bottom")
-               ("base-index"        0)
-               ("mouse"             nil)
-               ("synchronize-panes" nil)
-               ("status-interval"   15)
-               ("history-limit"     2000)
-               ("status"            "on")))
-    (destructuring-bind (name expected) c
-      (is (equal expected (cl-tmux/options:get-option name))
-          "~A default must be ~S" name expected))))
+  ;; Key global options return the expected default values from *option-registry*.
+  (it "option-defaults-table"
+    (dolist (c '(("status-position"   "bottom")
+                 ("base-index"        0)
+                 ("mouse"             nil)
+                 ("synchronize-panes" nil)
+                 ("status-interval"   15)
+                 ("history-limit"     2000)
+                 ("status"            "on")))
+      (destructuring-bind (name expected) c
+        (expect (equal expected (cl-tmux/options:get-option name))))))
 
-;;; ── make-option-spec constructor ─────────────────────────────────────────
+  ;;; ── make-option-spec constructor ─────────────────────────────────────────
 
-(test make-option-spec-table
-  "make-option-spec stores type, default, and name correctly for each type."
-  (dolist (c '((:boolean nil    "my-opt" "boolean with nil default")
-               (:integer 42     "count"  "integer with 42 default")
-               (:string  "hello" "label" "string with hello default")))
-    (destructuring-bind (type default name desc) c
-      (let ((spec (cl-tmux/options:make-option-spec :name name :type type :default default)))
-        (is (not (null spec))           "~A: non-nil spec" desc)
-        (is (string= name (cl-tmux/options:option-spec-name spec))    "~A: name" desc)
-        (is (eq type (cl-tmux/options:option-spec-type spec))         "~A: type" desc)
-        (is (equal default (cl-tmux/options:option-spec-default spec)) "~A: default" desc)))))
+  ;; make-option-spec stores type, default, and name correctly for each type.
+  (it "make-option-spec-table"
+    (dolist (c '((:boolean nil    "my-opt" "boolean with nil default")
+                 (:integer 42     "count"  "integer with 42 default")
+                 (:string  "hello" "label" "string with hello default")))
+      (destructuring-bind (type default name desc) c
+        (declare (ignore desc))
+        (let ((spec (cl-tmux/options:make-option-spec :name name :type type :default default)))
+          (expect (not (null spec)))
+          (expect (string= name (cl-tmux/options:option-spec-name spec)))
+          (expect (eq type (cl-tmux/options:option-spec-type spec)))
+          (expect (equal default (cl-tmux/options:option-spec-default spec)))))))
 
-;;; ── show-window-options unit tests ──────────────────────────────────────
-;;;
-;;; Direct API tests for cl-tmux/options:show-window-option and
-;;; show-window-options (render layer below the dispatch handlers).
-;;; These verify the formatting and scope-fallback logic in isolation,
-;;; without going through the full command dispatch.
+  ;;; ── show-window-options unit tests ──────────────────────────────────────
+  ;;;
+  ;;; Direct API tests for cl-tmux/options:show-window-option and
+  ;;; show-window-options (render layer below the dispatch handlers).
+  ;;; These verify the formatting and scope-fallback logic in isolation,
+  ;;; without going through the full command dispatch.
 
-(test show-window-option-returns-global-value-for-registered-option
-  "show-window-option falls back to the global value for a registered window-
-   scoped option when the window has no local override."
-  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
-        (cl-tmux/options:*global-options*
-         (let ((ht (make-hash-table :test #'equal)))
-           (setf (gethash "mode-keys" ht) "vi")
-           ht)))
-    (let ((out (cl-tmux/options:show-window-option "mode-keys" win)))
-      (is (not (null out))
-          "show-window-option must return a non-nil string for a global option")
-      (is (search "mode-keys" out)
-          "output must contain the option name")
-      (is (search "vi" out)
-          "output must contain the global value"))))
+  ;; show-window-option falls back to the global value for a registered window-
+  ;; scoped option when the window has no local override.
+  (it "show-window-option-returns-global-value-for-registered-option"
+    (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+          (cl-tmux/options:*global-options*
+           (let ((ht (make-hash-table :test #'equal)))
+             (setf (gethash "mode-keys" ht) "vi")
+             ht)))
+      (let ((out (cl-tmux/options:show-window-option "mode-keys" win)))
+        (expect (not (null out)))
+        (expect (search "mode-keys" out))
+        (expect (search "vi" out)))))
 
-(test show-window-option-returns-window-local-value
-  "show-window-option returns the window-local value when explicitly set,
-   overriding any global value."
-  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
-        (cl-tmux/options:*global-options*
-         (let ((ht (make-hash-table :test #'equal)))
-           (setf (gethash "mode-keys" ht) "emacs")
-           ht)))
-    (cl-tmux/options:set-option-for-window "mode-keys" "vi" win)
-    (let ((out (cl-tmux/options:show-window-option "mode-keys" win)))
-      (is (not (null out))
-          "show-window-option must return a non-nil string")
-      (is (search "vi" out)
-          "output must reflect the window-local override, not the global value"))))
+  ;; show-window-option returns the window-local value when explicitly set,
+  ;; overriding any global value.
+  (it "show-window-option-returns-window-local-value"
+    (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+          (cl-tmux/options:*global-options*
+           (let ((ht (make-hash-table :test #'equal)))
+             (setf (gethash "mode-keys" ht) "emacs")
+             ht)))
+      (cl-tmux/options:set-option-for-window "mode-keys" "vi" win)
+      (let ((out (cl-tmux/options:show-window-option "mode-keys" win)))
+        (expect (not (null out)))
+        (expect (search "vi" out)))))
 
-(test show-window-option-inherited-marks-with-asterisk
-  "show-window-option with :inherited-p T marks inherited values with '* ' prefix."
-  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
-        (cl-tmux/options:*global-options*
-         (let ((ht (make-hash-table :test #'equal)))
-           (setf (gethash "mode-keys" ht) "vi")
-           ht)))
-    ;; No window-local override; global value is inherited.
-    (let ((out (cl-tmux/options:show-window-option "mode-keys" win :inherited-p t)))
-      (is (not (null out))
-          "show-window-option with :inherited-p must return a non-nil string")
-      (is (search "* mode-keys" out)
-          "inherited value must be prefixed with '* '"))))
+  ;; show-window-option with :inherited-p T marks inherited values with '* ' prefix.
+  (it "show-window-option-inherited-marks-with-asterisk"
+    (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+          (cl-tmux/options:*global-options*
+           (let ((ht (make-hash-table :test #'equal)))
+             (setf (gethash "mode-keys" ht) "vi")
+             ht)))
+      ;; No window-local override; global value is inherited.
+      (let ((out (cl-tmux/options:show-window-option "mode-keys" win :inherited-p t)))
+        (expect (not (null out)))
+        (expect (search "* mode-keys" out)))))
 
-(test show-window-option-value-only-returns-bare-value
-  "show-window-option with :value-only-p T returns just the value string."
-  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
-        (cl-tmux/options:*global-options*
-         (let ((ht (make-hash-table :test #'equal)))
-           (setf (gethash "mode-keys" ht) "vi")
-           ht)))
-    (let ((out (cl-tmux/options:show-window-option "mode-keys" win :value-only-p t)))
-      (is (string= "vi" out)
-          "show-window-option :value-only-p must return just the value"))))
+  ;; show-window-option with :value-only-p T returns just the value string.
+  (it "show-window-option-value-only-returns-bare-value"
+    (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+          (cl-tmux/options:*global-options*
+           (let ((ht (make-hash-table :test #'equal)))
+             (setf (gethash "mode-keys" ht) "vi")
+             ht)))
+      (let ((out (cl-tmux/options:show-window-option "mode-keys" win :value-only-p t)))
+        (expect (string= "vi" out)))))
 
-(test show-window-option-returns-nil-for-unset-user-option
-  "show-window-option returns NIL for an unset user @-option."
-  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
-        (cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
-    (is (null (cl-tmux/options:show-window-option "@nonexistent" win))
-        "show-window-option must return NIL for an absent user option")))
+  ;; show-window-option returns NIL for an unset user @-option.
+  (it "show-window-option-returns-nil-for-unset-user-option"
+    (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+          (cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+      (expect (null (cl-tmux/options:show-window-option "@nonexistent" win)))))
 
-(test show-window-options-lists-window-local-options
-  "show-window-options without flags lists only the window-local options."
-  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
-        (cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
-    (cl-tmux/options:set-option-for-window "mode-keys" "vi" win)
-    (cl-tmux/options:set-option-for-window "synchronize-panes" t win)
-    (let ((out (cl-tmux/options:show-window-options win)))
-      (is (search "mode-keys" out)
-          "show-window-options must list mode-keys local option")
-      (is (search "synchronize-panes" out)
-          "show-window-options must list synchronize-panes local option"))))
+  ;; show-window-options without flags lists only the window-local options.
+  (it "show-window-options-lists-window-local-options"
+    (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+          (cl-tmux/options:*global-options* (make-hash-table :test #'equal)))
+      (cl-tmux/options:set-option-for-window "mode-keys" "vi" win)
+      (cl-tmux/options:set-option-for-window "synchronize-panes" t win)
+      (let ((out (cl-tmux/options:show-window-options win)))
+        (expect (search "mode-keys" out))
+        (expect (search "synchronize-panes" out)))))
 
-(test show-window-options-global-flag-lists-global-options
-  "show-window-options with :global-p T lists global window-scoped options."
-  (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
-        (cl-tmux/options:*global-options*
-         (let ((ht (make-hash-table :test #'equal)))
-           (setf (gethash "mode-keys" ht) "emacs")
-           ht)))
-    (let ((out (cl-tmux/options:show-window-options win :global-p t)))
-      (is (search "mode-keys" out)
-          "show-window-options :global-p must include global window options")
-      (is (search "emacs" out)
-          "show-window-options :global-p must show the global value"))))
+  ;; show-window-options with :global-p T lists global window-scoped options.
+  (it "show-window-options-global-flag-lists-global-options"
+    (let ((win (cl-tmux/model:make-window :id 1 :name "test-win"))
+          (cl-tmux/options:*global-options*
+           (let ((ht (make-hash-table :test #'equal)))
+             (setf (gethash "mode-keys" ht) "emacs")
+             ht)))
+      (let ((out (cl-tmux/options:show-window-options win :global-p t)))
+        (expect (search "mode-keys" out))
+        (expect (search "emacs" out))))))

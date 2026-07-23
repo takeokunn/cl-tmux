@@ -37,7 +37,7 @@
   ((session-locked-p session)
    (setf (session-locked-p session) nil
          *dirty* t)
-   (values nil #'%ground-input-state))
+   (%ground-values))
   ;; ── Active menu: j/k navigate, Enter selects, q/Esc dismisses ───────────────
   ;; Menu takes priority over overlay so choose-session/choose-window is
   ;; navigable with the keyboard; the overlay just renders the menu content.
@@ -46,7 +46,7 @@
   ;; file loads before dispatch-core.lisp (where %format-menu is defined).
   ((menu-active-p)
    (%dispatch-menu-key session byte)
-   (values nil #'%ground-input-state))
+   (%ground-values))
   ;; ── Global overlays take priority ─────────────────────────────────────────
   ;; j/k scroll; q/Esc dismiss; Up/Down arrows accumulate as ESC sequences and
   ;; are routed to overlay-scroll inside make-escape-input-k; all other keys
@@ -59,7 +59,7 @@
        (values nil (make-prompt-escape-input-k (%make-escape-buffer byte)))
        (progn
          (handle-prompt-key byte)
-         (values nil #'%ground-input-state))))
+         (%ground-values))))
   ;; ── Active custom key table (switch-client -T <table>) ─────────────────────
   ;; While the client is in a user key table, keys are looked up THERE (not
   ;; root/prefix) and the table PERSISTS until a binding switches back (e.g.
@@ -72,7 +72,7 @@
      (when entry
        (%run-key-table-binding session entry byte)))
    (setf *dirty* t)
-   (values nil #'%ground-input-state))
+   (%ground-values))
   ;; ── Copy-mode single-byte navigation (unprefixed) ─────────────────────────
   ;; Copy mode has its own active table, so ordinary bytes are resolved there
   ;; before root/prefix bindings.  ESC is left to the escape accumulator below:
@@ -93,7 +93,7 @@
    (%forward-octets-synchronized session
                                   (make-array 1 :element-type '(unsigned-byte 8)
                                                 :initial-element byte))
-   (values nil #'%ground-input-state))
+   (%ground-values))
   ;; ── Root key-table: check for bindings that fire without any prefix ────────
   ;; Looked up before the prefix-key check so that -n bindings can intercept
   ;; keys that would otherwise be forwarded to the pane.
@@ -122,4 +122,4 @@
    (%forward-octets-synchronized session
                                   (make-array 1 :element-type '(unsigned-byte 8)
                                                :initial-element byte))
-   (values nil #'%ground-input-state)))
+   (%ground-values)))

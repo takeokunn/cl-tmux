@@ -80,11 +80,10 @@
 ;;; [-f file] [-L socket-name] [-S socket-path] [-T features] [command
 ;;; [flags]]`).  Global flags may appear in ANY order before the command word.
 ;;;
-;;; This replaces main() calling %consume-global-socket-flags directly (still
-;;; kept, and still covered by its own unit tests, for -L/-S callers that want
-;;; the narrow hand-rolled scanner) with a real option parser, fixing a real
-;;; bug: previously `cl-tmux -L sock -C` failed with a usage error because -L
-;;; wasn't a *startup-modes* name and -C only worked as argv's first token.
+;;; This replaces the old hand-rolled -L/-S-only argv scanner with a real
+;;; option parser, fixing a real bug: previously `cl-tmux -L sock -C` failed
+;;; with a usage error because -L wasn't a *startup-modes* name and -C only
+;;; worked as argv's first token.
 ;;;
 ;;; Flags with real, additional effects: -L/-S (socket), -f (config file, see
 ;;; config-paths.lisp), -2 (256-colour downsampling, see renderer-format.lisp

@@ -5,281 +5,251 @@
 ;;;; render-overlay scroll, %status-bar-line gap, inline style blocks, SGR-aware width,
 ;;;; background-window bell relay.
 
-(in-suite renderer-suite)
+(describe "renderer-suite"
 
-;;; ── %clamp-status-segment ───────────────────────────────────────────────────
+  ;;; ── %clamp-status-segment ───────────────────────────────────────────────────
 
-(test clamp-status-segment-table
-  "%clamp-status-segment returns text unchanged when it fits (≤ max) and truncates when it exceeds max."
-  (check-status-segment-clamp-cases
-   '(("hello" 10 "hello" "shorter than max -> unchanged")
-     ("hello"  5 "hello" "exactly max length -> unchanged")
-     ("hello"  3 "hel"   "exceeds max -> truncated to 3 chars")
-     (""      10 ""      "empty string -> always unchanged"))))
+  ;; %clamp-status-segment returns text unchanged when it fits (≤ max) and truncates when it exceeds max.
+  (it "clamp-status-segment-table"
+    (check-status-segment-clamp-cases
+     '(("hello" 10 "hello" "shorter than max -> unchanged")
+       ("hello"  5 "hello" "exactly max length -> unchanged")
+       ("hello"  3 "hel"   "exceeds max -> truncated to 3 chars")
+       (""      10 ""      "empty string -> always unchanged"))))
 
-;;; ── set-cursor-shape in rendered output ──────────────────────────────────────
+  ;;; ── set-cursor-shape in rendered output ──────────────────────────────────────
 
-(test render-session-emits-cursor-shape
-  "render-session-to-string emits the DECSCUSR sequence for the pane cursor shape."
-  (let* ((sess  (make-renderer-test-session 20 5))
-         (ap    (session-active-pane sess))
-         (sc    (pane-screen ap)))
-    ;; Set a non-default cursor shape (2 = steady block)
-    (setf (cl-tmux/terminal/types:screen-cursor-shape sc) 2)
-    (let ((out (render-session-to-string sess 6 20)))
-      (is (search (format nil "~C[2 q" #\Escape) out)
-          "DECSCUSR shape 2 must appear in the frame (got ~S)" out))))
+  ;; render-session-to-string emits the DECSCUSR sequence for the pane cursor shape.
+  (it "render-session-emits-cursor-shape"
+    (let* ((sess  (make-renderer-test-session 20 5))
+           (ap    (session-active-pane sess))
+           (sc    (pane-screen ap)))
+      ;; Set a non-default cursor shape (2 = steady block)
+      (setf (cl-tmux/terminal/types:screen-cursor-shape sc) 2)
+      (let ((out (render-session-to-string sess 6 20)))
+        (expect (search (format nil "~C[2 q" #\Escape) out)))))
 
-;;; ── render-session-to-string with nil window ────────────────────────────────
+  ;;; ── render-session-to-string with nil window ────────────────────────────────
 
-(test render-session-no-window-produces-output
-  "render-session-to-string with a session that has no active window still renders."
-  (let* ((sess (make-session :id 1 :name "0" :windows nil)))
+  ;; render-session-to-string with a session that has no active window still renders.
+  (it "render-session-no-window-produces-output"
+    (let* ((sess (make-session :id 1 :name "0" :windows nil)))
+      (finishes
+        (let ((out (render-session-to-string sess 5 20)))
+          (expect (plusp (length out)))))))
+
+  ;;; ── %render-panes-and-borders with nil window ───────────────────────────────
+
+  ;; %render-panes-and-borders with NIL window does not signal.
+  (it "render-panes-borders-nil-window-finishes"
     (finishes
-      (let ((out (render-session-to-string sess 5 20)))
-        (is (plusp (length out))
-            "no-window render must produce non-empty output")))))
+      (let ((buf (make-string-output-stream)))
+        (cl-tmux/renderer::%render-panes-and-borders buf nil nil nil nil 80))))
 
-;;; ── %render-panes-and-borders with nil window ───────────────────────────────
+  ;;; ── status-justify-line dispatch table ──────────────────────────────────────
 
-(test render-panes-borders-nil-window-finishes
-  "%render-panes-and-borders with NIL window does not signal."
-  (finishes
-    (let ((buf (make-string-output-stream)))
-      (cl-tmux/renderer::%render-panes-and-borders buf nil nil nil nil 80))))
+  ;; %status-justify-line dispatches correctly to right/centre/left strategies.
+  (it "status-justify-line-table-driven"
+    (let ((cases
+           ;; (justify left right cols . description)
+           '(("right"  "L" "R" 20 . "right")
+             ("centre" "L" "R" 20 . "centre")
+             ("left"   "L" "R" 20 . "left (default)")
+             ("unknown" "L" "R" 20 . "unknown falls back to left"))))
+      (dolist (c cases)
+        (destructuring-bind (justify left right cols . desc) c
+          (declare (ignore desc))
+          (let ((result (cl-tmux/renderer::%status-justify-line left right cols justify)))
+            (expect (<= (length result) cols))
+            (expect (search left result)))))))
 
-;;; ── status-justify-line dispatch table ──────────────────────────────────────
+  ;;; ── render-overlay with scroll offset ───────────────────────────────────────
 
-(test status-justify-line-table-driven
-  "%status-justify-line dispatches correctly to right/centre/left strategies."
-  (let ((cases
-         ;; (justify left right cols . description)
-         '(("right"  "L" "R" 20 . "right")
-           ("centre" "L" "R" 20 . "centre")
-           ("left"   "L" "R" 20 . "left (default)")
-           ("unknown" "L" "R" 20 . "unknown falls back to left"))))
-    (dolist (c cases)
-      (destructuring-bind (justify left right cols . desc) c
-        (let ((result (cl-tmux/renderer::%status-justify-line left right cols justify)))
-          (is (<= (length result) cols)
-              "%status-justify-line ~A result must fit in ~D cols (got ~D: ~S)"
-              desc cols (length result) result)
-          (is (search left result)
-              "%status-justify-line ~A must contain left text (got ~S)" desc result))))))
+  ;; render-overlay renders overlay lines starting from *overlay-scroll-offset*.
+  (it "render-overlay-scroll-renders-lines-from-offset"
+    (let ((*overlay* nil)
+          (*overlay-scroll-offset* 0))
+      (show-overlay (format nil "line-A~%line-B~%line-C"))
+      (unwind-protect
+           (let ((buf (make-string-output-stream)))
+             (cl-tmux/renderer::render-overlay buf 30 10)
+             (let ((out (get-output-stream-string buf)))
+               (expect (search "line-A" out))))
+        (clear-overlay))))
 
-;;; ── render-overlay with scroll offset ───────────────────────────────────────
+  ;;; ── %justify-right gap calculation ──────────────────────────────────────────
 
-(test render-overlay-scroll-renders-lines-from-offset
-  "render-overlay renders overlay lines starting from *overlay-scroll-offset*."
-  (let ((*overlay* nil)
-        (*overlay-scroll-offset* 0))
-    (show-overlay (format nil "line-A~%line-B~%line-C"))
-    (unwind-protect
-         (let ((buf (make-string-output-stream)))
-           (cl-tmux/renderer::render-overlay buf 30 10)
-           (let ((out (get-output-stream-string buf)))
-             (is (search "line-A" out) "render-overlay must show first line")))
-      (clear-overlay))))
+  ;; %justify-right total length equals cols when content fits.
+  (it "status-bar-line-gap-fills-exactly"
+    (let* ((left  "abcde")
+           (time  "12:34")
+           (cols  20)
+           (line  (cl-tmux/renderer::%justify-right left time cols)))
+      (expect (<= (length line) cols))))
 
-;;; ── %justify-right gap calculation ──────────────────────────────────────────
+  ;; %justify-right with empty left and time strings produces spaces up to cols.
+  (it "status-bar-line-empty-left-and-time"
+    (let ((line (cl-tmux/renderer::%justify-right "" "" 10)))
+      (expect (<= (length line) 10))))
 
-(test status-bar-line-gap-fills-exactly
-  "%justify-right total length equals cols when content fits."
-  (let* ((left  "abcde")
-         (time  "12:34")
-         (cols  20)
-         (line  (cl-tmux/renderer::%justify-right left time cols)))
-    (is (<= (length line) cols)
-        "%justify-right must produce at most ~D chars (got ~D)" cols (length line))))
+  ;;; ── render-session-to-string status on/off interaction ──────────────────────
 
-(test status-bar-line-empty-left-and-time
-  "%justify-right with empty left and time strings produces spaces up to cols."
-  (let ((line (cl-tmux/renderer::%justify-right "" "" 10)))
-    (is (<= (length line) 10)
-        "%justify-right with empty inputs must fit in 10 cols (got ~D: ~S)"
-        (length line) line)))
+  ;; With status=T and default options, the frame includes the HH:MM time pattern.
+  (it "render-session-status-on-default-includes-time"
+    (with-isolated-options ("status" t "status-left" nil)
+      (let* ((sess (make-renderer-test-session 40 5))
+             (out  (render-session-to-string sess 6 40)))
+        ;; The default right status is HH:MM — 5 chars with a colon at position 2.
+        ;; We just check a colon is present in a 5-char time substring.
+        (expect (find #\: out)))))
 
-;;; ── render-session-to-string status on/off interaction ──────────────────────
+  ;;; ── inline #[attr] style blocks + SGR-aware width (renderer-statusbar) ────────
+  ;;;
+  ;;; tmux status strings carry inline #[fg=…] style blocks and embedded SGR.  Those
+  ;;; sequences are zero-width on screen, so the renderer expands #[…] into SGR and
+  ;;; measures width by VISIBLE cells.  %visible-length/%visible-truncate must reduce
+  ;;; to LENGTH/SUBSEQ on escape-free input (proven below) so older tests are intact.
 
-(test render-session-status-on-default-includes-time
-  "With status=T and default options, the frame includes the HH:MM time pattern."
-  (with-isolated-options ("status" t "status-left" nil)
-    (let* ((sess (make-renderer-test-session 40 5))
-           (out  (render-session-to-string sess 6 40)))
-      ;; The default right status is HH:MM — 5 chars with a colon at position 2.
-      ;; We just check a colon is present in a 5-char time substring.
-      (is (find #\: out)
-          "default status must include time with ':' character (got ~S)" out))))
+  ;; %visible-length equals LENGTH for strings with no escape sequences.
+  (it "visible-length-escape-free-equals-length"
+    (expect (= 5 (cl-tmux/renderer::%visible-length "hello")))
+    (expect (= 0 (cl-tmux/renderer::%visible-length "")))
+    (expect (= (length "a:b 12:34")
+               (cl-tmux/renderer::%visible-length "a:b 12:34"))))
 
-;;; ── inline #[attr] style blocks + SGR-aware width (renderer-statusbar) ────────
-;;;
-;;; tmux status strings carry inline #[fg=…] style blocks and embedded SGR.  Those
-;;; sequences are zero-width on screen, so the renderer expands #[…] into SGR and
-;;; measures width by VISIBLE cells.  %visible-length/%visible-truncate must reduce
-;;; to LENGTH/SUBSEQ on escape-free input (proven below) so older tests are intact.
+  ;; %visible-length counts only visible cells, skipping CSI SGR escapes.
+  (it "visible-length-skips-sgr-sequences"
+    (let ((esc #\Escape))
+      (expect (= 2 (cl-tmux/renderer::%visible-length
+                    (format nil "~C[32mhi~C[0m" esc esc))))
+      (expect (= 3 (cl-tmux/renderer::%visible-length
+                    (format nil "~C[1;44;97mABC" esc))))))
 
-(test visible-length-escape-free-equals-length
-  "%visible-length equals LENGTH for strings with no escape sequences."
-  (is (= 5 (cl-tmux/renderer::%visible-length "hello")))
-  (is (= 0 (cl-tmux/renderer::%visible-length "")))
-  (is (= (length "a:b 12:34")
-         (cl-tmux/renderer::%visible-length "a:b 12:34"))))
+  ;; %visible-truncate equals SUBSEQ for escape-free strings.
+  (it "visible-truncate-escape-free-equals-subseq"
+    (check-visible-truncate-cases
+     '(("hello" 3  "hel"   "truncate to 3")
+       ("hello" 5  "hello" "truncate at exact length")
+       ("hello" 99 "hello" "truncate past length -> unchanged")
+       ("hello" 0  ""      "truncate to 0 -> empty string"))))
 
-(test visible-length-skips-sgr-sequences
-  "%visible-length counts only visible cells, skipping CSI SGR escapes."
-  (let ((esc #\Escape))
-    (is (= 2 (cl-tmux/renderer::%visible-length
-              (format nil "~C[32mhi~C[0m" esc esc)))
-        "ESC[32mhiESC[0m has 2 visible cells")
-    (is (= 3 (cl-tmux/renderer::%visible-length
-              (format nil "~C[1;44;97mABC" esc)))
-        "a multi-param SGR prefix is zero-width")))
+  ;; %visible-truncate copies SGR escapes through without counting them toward N.
+  (it "visible-truncate-passes-sgr-through"
+    (let* ((esc  #\Escape)
+           (in   (format nil "~C[32mABCDE" esc))
+           (out  (cl-tmux/renderer::%visible-truncate in 2)))
+      (expect (= 2 (cl-tmux/renderer::%visible-length out)))
+      (expect (search "AB" out))
+      (expect (char= esc (char out 0)))))
 
-(test visible-truncate-escape-free-equals-subseq
-  "%visible-truncate equals SUBSEQ for escape-free strings."
-  (check-visible-truncate-cases
-   '(("hello" 3  "hel"   "truncate to 3")
-     ("hello" 5  "hello" "truncate at exact length")
-     ("hello" 99 "hello" "truncate past length -> unchanged")
-     ("hello" 0  ""      "truncate to 0 -> empty string"))))
+  ;; %status-style-block-sgr turns fg=green into the SGR colour code 32.
+  (it "status-style-block-fg-becomes-sgr"
+    (let ((out (cl-tmux/renderer::%status-style-block-sgr "fg=green" "44;97")))
+      (expect (search (format nil "~C[32m" #\Escape) out))))
 
-(test visible-truncate-passes-sgr-through
-  "%visible-truncate copies SGR escapes through without counting them toward N."
-  (let* ((esc  #\Escape)
-         (in   (format nil "~C[32mABCDE" esc))
-         (out  (cl-tmux/renderer::%visible-truncate in 2)))
-    (is (= 2 (cl-tmux/renderer::%visible-length out))
-        "result must hold exactly 2 visible cells (got ~S)" out)
-    (is (search "AB" out) "the 2 kept glyphs AB must be present (got ~S)" out)
-    (is (char= esc (char out 0))
-        "the leading SGR escape must be preserved (got ~S)" out)))
+  ;; %status-style-block-sgr default/none/empty resets to the base status SGR.
+  (it "status-style-block-default-resets-to-base"
+    (check-status-style-reset-cases "44;97" '("default" "none" "" "  ")))
 
-(test status-style-block-fg-becomes-sgr
-  "%status-style-block-sgr turns fg=green into the SGR colour code 32."
-  (let ((out (cl-tmux/renderer::%status-style-block-sgr "fg=green" "44;97")))
-    (is (search (format nil "~C[32m" #\Escape) out)
-        "fg=green must produce ESC[32m (got ~S)" out)))
+  ;; %status-expand-style-blocks returns escape-free / block-free text unchanged.
+  (it "status-expand-style-blocks-no-block-unchanged"
+    (check-status-expand-unchanged-cases "44;97" '("plain text" " 0 1:1* ")))
 
-(test status-style-block-default-resets-to-base
-  "%status-style-block-sgr default/none/empty resets to the base status SGR."
-  (check-status-style-reset-cases "44;97" '("default" "none" "" "  ")))
+  ;; %status-expand-style-blocks turns #[fg=green]X#[default] into SGR around X.
+  (it "status-expand-style-blocks-converts-blocks"
+    (let* ((esc #\Escape)
+           (out (cl-tmux/renderer::%status-expand-style-blocks
+                 "#[fg=green]X#[default]Y" "44;97")))
+      (expect (null (search "#[" out)))
+      (expect (search (format nil "~C[32mX" esc) out))
+      (expect (search (format nil "~C[0;44;97mY" esc) out))))
 
-(test status-expand-style-blocks-no-block-unchanged
-  "%status-expand-style-blocks returns escape-free / block-free text unchanged."
-  (check-status-expand-unchanged-cases "44;97" '("plain text" " 0 1:1* ")))
+  ;; %clamp-status-segment measures visible cells; SGR escapes don't count and survive.
+  (it "clamp-status-segment-counts-visible-not-sgr"
+    (let* ((esc #\Escape)
+           (txt (format nil "~C[32mhello~C[0m" esc esc)))   ; 5 visible cells
+      (expect (string= txt (cl-tmux/renderer::%clamp-status-segment txt 5)))
+      (expect (= 3 (cl-tmux/renderer::%visible-length
+                    (cl-tmux/renderer::%clamp-status-segment txt 3))))))
 
-(test status-expand-style-blocks-converts-blocks
-  "%status-expand-style-blocks turns #[fg=green]X#[default] into SGR around X."
-  (let* ((esc #\Escape)
-         (out (cl-tmux/renderer::%status-expand-style-blocks
-               "#[fg=green]X#[default]Y" "44;97")))
-    (is (null (search "#[" out))
-        "no literal #[ block may survive (got ~S)" out)
-    (is (search (format nil "~C[32mX" esc) out)
-        "green SGR must wrap X (got ~S)" out)
-    (is (search (format nil "~C[0;44;97mY" esc) out)
-        "#[default] before Y must reset to base SGR (got ~S)" out)))
+  ;; %justify-right computes the gap from visible cells, so SGR doesn't shove content off-edge.
+  (it "justify-right-ignores-sgr-width"
+    (let* ((esc  #\Escape)
+           (left (format nil "~C[32mABC~C[0m" esc esc))   ; 3 visible cells
+           (line (cl-tmux/renderer::%justify-right left "RR" 20)))
+      (expect (= 20 (cl-tmux/renderer::%visible-length line)))
+      (expect (search "RR" line))))
 
-(test clamp-status-segment-counts-visible-not-sgr
-  "%clamp-status-segment measures visible cells; SGR escapes don't count and survive."
-  (let* ((esc #\Escape)
-         (txt (format nil "~C[32mhello~C[0m" esc esc)))   ; 5 visible cells
-    (is (string= txt (cl-tmux/renderer::%clamp-status-segment txt 5))
-        "5 visible ≤ max 5 → unchanged (SGR preserved)")
-    (is (= 3 (cl-tmux/renderer::%visible-length
-              (cl-tmux/renderer::%clamp-status-segment txt 3)))
-        "max 3 keeps 3 visible cells")))
+  ;; render-status-bar expands status-left #[fg=green]…#[default] into real SGR,
+  ;; and no literal #[ block reaches the output.
+  (it "render-status-bar-inline-style-block-becomes-sgr"
+    (with-isolated-options ("status-left"  "#[fg=green]G#[default]"
+                            "status-right" nil
+                            "status-style" "")
+      (let* ((sess (make-renderer-test-session 40 6))
+             (out  (render-status-bar-output sess 10 40)))
+        (expect (search (format nil "~C[32m" #\Escape) out))
+        (expect (null (search "#[" out)))
+        (expect (find #\G out)))))
 
-(test justify-right-ignores-sgr-width
-  "%justify-right computes the gap from visible cells, so SGR doesn't shove content off-edge."
-  (let* ((esc  #\Escape)
-         (left (format nil "~C[32mABC~C[0m" esc esc))   ; 3 visible cells
-         (line (cl-tmux/renderer::%justify-right left "RR" 20)))
-    (is (= 20 (cl-tmux/renderer::%visible-length line))
-        "visible width must fill exactly 20 cols (got ~D: ~S)"
-        (cl-tmux/renderer::%visible-length line) line)
-    (is (search "RR" line) "right text must be present (got ~S)" line)))
+  ;;; ── Background-window bell relay (gap #23) ────────────────────────────────
 
-(test render-status-bar-inline-style-block-becomes-sgr
-  "render-status-bar expands status-left #[fg=green]…#[default] into real SGR,
-   and no literal #[ block reaches the output."
-  (with-isolated-options ("status-left"  "#[fg=green]G#[default]"
-                          "status-right" nil
-                          "status-style" "")
-    (let* ((sess (make-renderer-test-session 40 6))
-           (out  (render-status-bar-output sess 10 40)))
-      (is (search (format nil "~C[32m" #\Escape) out)
-          "inline #[fg=green] must emit SGR 32 (got ~S)" out)
-      (is (null (search "#[" out))
-          "literal #[ must not survive into the rendered bar (got ~S)" out)
-      (is (find #\G out)
-          "the styled glyph G must be present (got ~S)" out))))
-
-;;; ── Background-window bell relay (gap #23) ────────────────────────────────
-
-(test render-session-background-bell-action-table
-  "bell-action controls whether BEL in a non-active window reaches the rendered frame."
-  (dolist (row '(("any"     t   "bell-action 'any': background BEL must appear")
-                 ("other"   t   "bell-action 'other': background BEL must appear")
-                 ("current" nil "bell-action 'current': background BEL must be swallowed")
-                 ("none"    nil "bell-action 'none': all BELs must be swallowed")))
-    (destructuring-bind (bell-action expected-bell-p desc) row
-      (with-isolated-options ("bell-action" bell-action "visual-bell" "off" "status" "off")
-        (let* ((sess  (make-fake-session :nwindows 2))
-               (win2  (second (cl-tmux/model:session-windows sess)))
-               (pane2 (first (cl-tmux/model:window-panes win2))))
-          (setf (cl-tmux/terminal/types:screen-bell-pending
-                 (cl-tmux/model:pane-screen pane2)) t)
-          (let ((out (cl-tmux/renderer::render-session-to-string sess 5 20)))
-            (if expected-bell-p
-                (is (find (code-char 7) out)      "~A" desc)
-                (is (null (find (code-char 7) out)) "~A" desc))
-            ;; The pending bell is consumed either way — a bell swallowed by
-            ;; bell-action must not ring later when its window becomes active.
-            (is (null (cl-tmux/terminal/types:screen-bell-pending
-                       (cl-tmux/model:pane-screen pane2)))
-                "background bell must be consumed under bell-action ~A"
-                bell-action)))))))
-
-(test render-session-current-window-bell-fires-alert-bell-hook
-  "A BEL in the ACTIVE window fires the alert-bell hook with the window when
-   bell-action applies to the current window (any/current); other/none do not."
-  (dolist (row '(("any" t) ("current" t) ("other" nil) ("none" nil)))
-    (destructuring-bind (bell-action expect-fired) row
-      (with-isolated-options ("bell-action" bell-action "status" "off")
-        (with-isolated-hooks
-          (let* ((sess     (make-fake-session :nwindows 1))
-                 (win      (cl-tmux/model:session-active-window sess))
-                 (pane     (cl-tmux/model:window-active-pane win))
-                 (hook-win nil))
+  ;; bell-action controls whether BEL in a non-active window reaches the rendered frame.
+  (it "render-session-background-bell-action-table"
+    (dolist (row '(("any"     t   "bell-action 'any': background BEL must appear")
+                   ("other"   t   "bell-action 'other': background BEL must appear")
+                   ("current" nil "bell-action 'current': background BEL must be swallowed")
+                   ("none"    nil "bell-action 'none': all BELs must be swallowed")))
+      (destructuring-bind (bell-action expected-bell-p desc) row
+        (declare (ignore desc))
+        (with-isolated-options ("bell-action" bell-action "visual-bell" "off" "status" "off")
+          (let* ((sess  (make-fake-session :nwindows 2))
+                 (win2  (second (cl-tmux/model:session-windows sess)))
+                 (pane2 (first (cl-tmux/model:window-panes win2))))
             (setf (cl-tmux/terminal/types:screen-bell-pending
-                   (cl-tmux/model:pane-screen pane)) t)
-            (cl-tmux/hooks:add-hook "alert-bell"
-                                    (lambda (&rest args) (setf hook-win (first args))))
-            (cl-tmux/renderer::render-session-to-string sess 5 20)
-            (if expect-fired
-                (is (eq win hook-win)
-                    "bell-action ~A must fire alert-bell with the current window"
-                    bell-action)
-                (is (null hook-win)
-                    "bell-action ~A must not fire alert-bell for the current window"
-                    bell-action))))))))
+                   (cl-tmux/model:pane-screen pane2)) t)
+            (let ((out (cl-tmux/renderer::render-session-to-string sess 5 20)))
+              (if expected-bell-p
+                  (expect (find (code-char 7) out))
+                  (expect (null (find (code-char 7) out))))
+              ;; The pending bell is consumed either way — a bell swallowed by
+              ;; bell-action must not ring later when its window becomes active.
+              (expect (null (cl-tmux/terminal/types:screen-bell-pending
+                             (cl-tmux/model:pane-screen pane2))))))))))
 
-(test emit-bell-visual-bell-tri-state-table
-  "visual-bell off/both relay the audible BEL; on is visual-only."
-  (dolist (row '(("off" t) ("both" t) ("on" nil)))
-    (destructuring-bind (visual expect-bel-p) row
-      (let ((out (with-output-to-string (s)
-                   (cl-tmux/renderer::%emit-bell s visual))))
-        (if expect-bel-p
-            (is (find (code-char 7) out)
-                "visual-bell ~S must relay the audible BEL" visual)
-            (is (null (find (code-char 7) out))
-                "visual-bell ~S must suppress the audible BEL" visual))))))
+  ;; A BEL in the ACTIVE window fires the alert-bell hook with the window when
+  ;; bell-action applies to the current window (any/current); other/none do not.
+  (it "render-session-current-window-bell-fires-alert-bell-hook"
+    (dolist (row '(("any" t) ("current" t) ("other" nil) ("none" nil)))
+      (destructuring-bind (bell-action expect-fired) row
+        (with-isolated-options ("bell-action" bell-action "status" "off")
+          (with-isolated-hooks
+            (let* ((sess     (make-fake-session :nwindows 1))
+                   (win      (cl-tmux/model:session-active-window sess))
+                   (pane     (cl-tmux/model:window-active-pane win))
+                   (hook-win nil))
+              (setf (cl-tmux/terminal/types:screen-bell-pending
+                     (cl-tmux/model:pane-screen pane)) t)
+              (cl-tmux/hooks:add-hook "alert-bell"
+                                      (lambda (&rest args) (setf hook-win (first args))))
+              (cl-tmux/renderer::render-session-to-string sess 5 20)
+              (if expect-fired
+                  (expect (eq win hook-win))
+                  (expect (null hook-win)))))))))
 
-(test emit-bell-rejects-non-canonical-visual-bell
-  "%emit-bell rejects non-canonical visual-bell values instead of treating them as off."
-  (dolist (visual '(nil "" "disabled"))
-    (signals error
-      (with-output-to-string (s)
-        (cl-tmux/renderer::%emit-bell s visual)))))
+  ;; visual-bell off/both relay the audible BEL; on is visual-only.
+  (it "emit-bell-visual-bell-tri-state-table"
+    (dolist (row '(("off" t) ("both" t) ("on" nil)))
+      (destructuring-bind (visual expect-bel-p) row
+        (let ((out (with-output-to-string (s)
+                     (cl-tmux/renderer::%emit-bell s visual))))
+          (if expect-bel-p
+              (expect (find (code-char 7) out))
+              (expect (null (find (code-char 7) out))))))))
+
+  ;; %emit-bell rejects non-canonical visual-bell values instead of treating them as off.
+  (it "emit-bell-rejects-non-canonical-visual-bell"
+    (dolist (visual '(nil "" "disabled"))
+      (signals error
+        (with-output-to-string (s)
+          (cl-tmux/renderer::%emit-bell s visual))))))

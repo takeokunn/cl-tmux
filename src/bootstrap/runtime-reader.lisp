@@ -17,6 +17,14 @@
 ;;; CPS state machine: each state function takes (pane) and returns the next
 ;;; state function (or NIL to stop).
 
+(defvar *reader-scratch-buffer* nil
+  "Per-reader-thread scratch octet buffer reused by reader-reading-state to read
+   one PTY chunk without allocating a fresh +pty-buf-size+ buffer on every read.
+   Bound (thread-locally) around each reader loop in %pane-reader-loop, so each
+   pane's reader thread owns a distinct buffer.  pty-read-blocking-into returns a
+   fresh exact-size copy of the bytes read, so handing that copy downstream is
+   safe even though the scratch buffer is overwritten by the next read.")
+
 (defun reader-idle-state (pane)
   "Poll the pane PTY fd; transition to reading if data is available."
   (if (select-fds (list (pane-fd pane)) +pty-poll-timeout-us+)
@@ -25,7 +33,7 @@
 
 (defun reader-reading-state (pane)
   "Read one PTY chunk and feed it to PANE; transition to eof if EOF."
-  (let ((bytes (pty-read-blocking (pane-fd pane) +pty-buf-size+)))
+  (let ((bytes (pty-read-blocking-into (pane-fd pane) *reader-scratch-buffer*)))
     (if (null bytes)
         #'reader-eof-state
         (progn
@@ -101,7 +109,12 @@
 
 (defun %pane-reader-loop (pane)
   "Feed PTY output into PANE screen until EOF or *running* becomes NIL."
-  (%run-reader-states pane #'reader-idle-state))
+  ;; Allocate ONE scratch read buffer for this reader thread (one thread per
+  ;; pane) and bind it thread-locally for reader-reading-state to reuse, so the
+  ;; hot read path no longer allocates a +pty-buf-size+ buffer per read.
+  (let ((*reader-scratch-buffer*
+          (make-array +pty-buf-size+ :element-type '(unsigned-byte 8))))
+    (%run-reader-states pane #'reader-idle-state)))
 
 (defun start-reader-thread (pane)
   "Spawn a thread running %pane-reader-loop for PANE."

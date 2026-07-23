@@ -10,8 +10,9 @@
 ;;;; control path and the subprocess itself; background callers return
 ;;;; immediately but the worker still gives the subprocess a bounded lifetime.
 ;;;;
-;;;; uiop:run-program is used instead of sb-ext:run-program so the code is
-;;;; portable across all ASDF-supported implementations.
+;;;; Subprocesses run through cl-tmux/config:*process-boundary*
+;;;; (cl-boundary-kit), portable across all ASDF-supported implementations and
+;;;; swappable for a fake boundary in tests.
 ;;;;
 ;;;; if-shell is exported and wired to the :if-shell dispatch key in dispatch.lisp
 ;;;; so it is reachable from the prefix-key handler.

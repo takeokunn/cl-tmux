@@ -170,6 +170,14 @@
               #'cl-tmux/options:set-option
               cl-tmux/options:*global-options*)))
 
+(defun %set-option-already-present-p (name server-p)
+  "True when NAME already has a stored value in the options table indicated by
+   SERVER-P (server-options when true, global-options otherwise).
+   Used by %apply-set-directive's -o/only-if-unset check."
+  (multiple-value-bind (getter setter table) (%option-scope-triple server-p)
+    (declare (ignore getter setter))
+    (nth-value 1 (gethash name table))))
+
 (defun %route-set-value (name value server-p append-p unset-p)
   "Store VALUE under NAME in the appropriate option table, handling -u/-s/-a/-sa.
    Pure routing: all value coercion has already happened."
@@ -201,10 +209,7 @@
           (unless (%unsupported-set-option-p name)
             (if (and only-if-unset-p
                      (not unset-p)
-                     (multiple-value-bind (getter setter table)
-                         (%option-scope-triple server-p)
-                       (declare (ignore getter setter))
-                       (nth-value 1 (gethash name table))))
+                     (%set-option-already-present-p name server-p))
                 ;; tmux `set-option -o`: an already-set option is skipped ("already
                 ;; set" at config load); the directive itself is handled.
                 t

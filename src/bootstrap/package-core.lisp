@@ -25,6 +25,7 @@
    #:ensure-key-table
    #:key-table-bind
    #:describe-key-binding-notes
+   #:key-display-string
    #:key-table-unbind
    #:key-table-lookup
    #:key-table-command
@@ -55,7 +56,10 @@
    #:*prefix2-key-code*
    #:%parse-prefix-key
    ;; ORCHESTRATE-layer shell initializer
-   #:init-default-shell))
+   #:init-default-shell
+   ;; Lazy SB-POSIX symbol lookup (shared with cl-tmux/model's process
+   ;; environment helpers, which used to carry their own identical copy)
+   #:find-posix-function))
 
 (defpackage #:cl-tmux/pty
   (:use #:cl #:cffi)
@@ -64,8 +68,9 @@
    #:forkpty-with-shell    ; (rows cols) → (values master-fd child-pid slave-path)
    #:pty-write             ; (fd data)   — write octets/string to PTY
    #:pty-read-blocking     ; (fd size)   → octet-vector or nil on EOF
+   #:pty-read-blocking-into ; (fd buffer) → octet-vector or nil; reuses BUFFER
    #:pty-close             ; (fd pid)
-   #:pty-child-exit-status ; (fd) → (values code :exited|:signaled) or NIL
+   #:pty-child-exit-status ; (fd &optional timeout) → (values code :exited|:signaled) or NIL
    #:set-pty-size          ; (fd rows cols)
    ;; Terminal raw mode
    #:enable-raw-mode!      ; (fd)

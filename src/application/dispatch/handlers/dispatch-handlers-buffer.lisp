@@ -63,20 +63,25 @@
 ;;; a strict cl-tmux command surface: chooser-format/filter/sort/template
 ;;; arguments are rejected.
 
-(defun %cmd-choose-client (session &optional args)
-  "choose-client: show local client information."
-  (unless (%reject-local-chooser-args-p "choose-client" args)
-    (dispatch-command session :choose-client nil)))
+(defmacro define-choose-commands (&rest specs)
+  "Define a scriptable-args-rejecting choose-* command function for each SPEC,
+   a (function-name command-name dispatch-keyword docstring) quad."
+  `(progn
+     ,@(mapcar (lambda (spec)
+                 (destructuring-bind (name command-name keyword docstring) spec
+                   `(defun ,name (session &optional args)
+                      ,docstring
+                      (unless (%reject-local-chooser-args-p ,command-name args)
+                        (dispatch-command session ,keyword nil)))))
+               specs)))
 
-(defun %cmd-choose-tree (session &optional args)
-  "choose-tree: open the session/window tree chooser overlay."
-  (unless (%reject-local-chooser-args-p "choose-tree" args)
-    (dispatch-command session :choose-tree nil)))
-
-(defun %cmd-choose-window (session &optional args)
-  "choose-window: open the window chooser overlay."
-  (unless (%reject-local-chooser-args-p "choose-window" args)
-    (dispatch-command session :choose-window nil)))
+(define-choose-commands
+  (%cmd-choose-client "choose-client" :choose-client
+   "choose-client: show local client information.")
+  (%cmd-choose-tree "choose-tree" :choose-tree
+   "choose-tree: open the session/window tree chooser overlay.")
+  (%cmd-choose-window "choose-window" :choose-window
+   "choose-window: open the window chooser overlay."))
 
 ;;; -- %cmd-delete-buffer ------------------------------------------------------
 
