@@ -5,6 +5,24 @@
 ;;;; The event loop keeps the dispatch table, while these helpers own the
 ;;;; per-message policy for attach/resize, keys, and forwarded commands.
 
+;;; This macro is defined here (the first file that uses it) so it is available
+;;; at compile time for the handlers below AND for server-multi.lisp /
+;;; server-multi-loop.lisp, which load after this file.  A prior refactor left
+;;; the definition in server-multi.lisp — loaded LATER — so the macro calls
+;;; here were compiled as calls to an undefined function, leaving CONDITION an
+;;; unbound variable at runtime.
+(defmacro with-loop-safe-error (binding &body body)
+  "Run BODY, catching any ERROR so one bad client/command can never wedge the
+   multi-client event loop.  On success, returns BODY's value; on an ERROR,
+   evaluates and returns ON-ERROR instead — optionally with the condition bound
+   to CONDITION-VAR so ON-ERROR can log it.  This is the single shape behind
+   this file's 'never let one client take down the server loop' invariant."
+  (let ((condition-var (first binding))
+        (on-error (getf (rest binding) :on-error)))
+    `(handler-case (progn ,@body)
+       (error ,(if condition-var (list condition-var) '())
+         ,on-error))))
+
 (defun %handle-multi-attach-or-resize (session conn type payload)
   "Update CONN's geometry from PAYLOAD, keep attach -r state, refresh client
    ordering for window-size latest, and reapply the effective shared size."

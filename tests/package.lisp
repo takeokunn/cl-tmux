@@ -1,7 +1,10 @@
 ;;;; Test package for cl-tmux.
 
 (defpackage #:cl-tmux/test
-  (:use #:cl #:fiveam)
+  ;; The test framework is cl-weave, driven through the FiveAM-surface shim in
+  ;; fiveam-compat.lisp (def-suite / in-suite / test / is / signals / …).  No
+  ;; fiveam dependency remains.
+  (:use #:cl)
   (:import-from #:cl-tmux/terminal
                 #:make-screen
                 #:screen-resize

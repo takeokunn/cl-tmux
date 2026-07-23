@@ -88,33 +88,39 @@
    command word: -L <socket-name> and -S <socket-path>, in both the separated
    (-L name) and attached (-Lname) getopt forms.  Sets *socket-name-override* /
    *socket-path-override* and returns the remaining argv."
+  ;; Advance ARGV by the argv that each consume returns.  A previous refactor
+  ;; had %consume-socket-flag POP its own LOCAL argv, so the caller's argv never
+  ;; advanced and this loop spun forever on the same "-L" — hanging every
+  ;; `cl-tmux -L … <command>` invocation at startup.
   (loop
-    (let ((head (first argv)))
-      (cond
-        ((null head) (return argv))
-        ((%consume-socket-flag argv "-L" :name)
-         nil)
-        ((%consume-socket-flag argv "-S" :path)
-         nil)
-        (t (return argv))))))
+    (when (null argv) (return argv))
+    (multiple-value-bind (argv-after-l consumed-l)
+        (%consume-socket-flag argv "-L" :name)
+      (if consumed-l
+          (setf argv argv-after-l)
+          (multiple-value-bind (argv-after-s consumed-s)
+              (%consume-socket-flag argv "-S" :path)
+            (if consumed-s
+                (setf argv argv-after-s)
+                (return argv)))))))
 
 (defun %consume-socket-flag (argv flag kind)
-  "Consume one global socket flag from ARGV when HEAD matches FLAG.
-   KIND selects which override slot is updated: :name or :path."
+  "When ARGV's head is FLAG (separated `-L name` or attached `-Lname` form),
+   update the override slot selected by KIND and return
+   (values REMAINING-ARGV T).  Otherwise return (values ARGV NIL).
+   Returning the remaining argv is what lets the caller actually advance."
   (let ((head (first argv)))
     (cond
-      ((null head) nil)
+      ((null head) (values argv nil))
       ((string= head flag)
-       (pop argv)
-       (when argv
-         (%set-socket-override kind (pop argv)))
-       t)
+       (let ((rest (rest argv)))
+         (when rest (%set-socket-override kind (first rest)))
+         (values (if rest (rest rest) '()) t)))
       ((and (> (length head) (length flag))
             (string= flag head :end2 (length flag)))
        (%set-socket-override kind (subseq head (length flag)))
-       (pop argv)
-       t)
-      (t nil))))
+       (values (rest argv) t))
+      (t (values argv nil)))))
 
 (defun %set-socket-override (kind value)
   "Update the global socket override selected by KIND with VALUE."

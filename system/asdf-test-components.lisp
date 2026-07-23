@@ -5,6 +5,7 @@
      :serial t
      :components
       ((:file "package")
+       (:file "fiveam-compat")   ; FiveAM-surface shim over cl-weave (must precede suite)
        (:file "suite")
        (:file "helpers-isolation")
       (:file "helpers-terminal-builders")

@@ -170,3 +170,39 @@
                          (%read-brace-block line stream)
                          line)))
       (apply-config-line full-line))))
+
+;;; Public config loaders.  These are exported (package-core.lisp) and called
+;;; from config-paths.lisp (load-config-file) and the test suite.  They were
+;;; dropped by an earlier file-split refactor while their exports and callers
+;;; remained; restored here so config-file loading (and its tests) work.
+
+(defun load-config-from-stream (stream)
+  "Apply every directive line read from STREAM, honoring %if/%elif/%else/%endif
+   blocks.  Multi-line { ... } command blocks (tmux 3.x brace syntax) are joined
+   into a single logical directive before being applied.  Returns the count applied."
+  ;; COND-STACK: one state per open %if level — :ACTIVE (this branch is taken),
+  ;; :SEEKING (no branch matched yet; keep evaluating %elif/%else), :TAKEN (a branch
+  ;; already matched; skip the rest), or :DEAD (an ancestor was skipping when this
+  ;; %if began).  A line is applied only when EVERY level is :ACTIVE.  The four
+  ;; states are what a plain skip flag cannot express: distinguishing "still seeking
+  ;; a match" from "a branch already matched" is required for correct %elif chains.
+  (let ((cond-stack nil)
+        (count 0))
+    (loop for raw = (read-line stream nil nil)
+          while raw
+          for line = (%strip-config-comment
+                      (%read-logical-config-line raw stream)) do
+            (let* ((trimmed (string-trim '(#\Space #\Tab #\Return #\Newline) line))
+                   (pp-type (%preprocessor-line-p trimmed)))
+              (if pp-type
+                  (setf cond-stack
+                        (%update-config-cond-stack pp-type trimmed cond-stack))
+                  (when (%apply-config-logical-line line stream cond-stack)
+                    (incf count)))))
+    count))
+
+(defun load-config-from-string (text)
+  "Apply every directive line in TEXT, honoring %if/%else/%endif blocks.
+   Returns the count of directives applied."
+  (with-input-from-string (in text)
+    (load-config-from-stream in)))

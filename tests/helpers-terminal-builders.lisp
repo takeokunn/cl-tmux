@@ -64,7 +64,7 @@
      (is (= ,cy (screen-cursor-y ,screen))
          "cursor-y: expected ~D got ~D" ,cy (screen-cursor-y ,screen))))
 
-(defmacro check-table (rows &key (test #'=))
+(defmacro check-table (rows &key (test '#'=))
   "Assert each (ACTUAL EXPECTED DESC) row in ROWS with TEST."
   `(dolist (row ,rows)
      (destructuring-bind (actual expected desc) row
